@@ -1,4 +1,4 @@
-# DocReview V1.0 — 构建与打包说明
+# DocReview V1.02 — 构建与打包说明
 
 ## 打包为 Windows 可执行程序
 
