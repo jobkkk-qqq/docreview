@@ -59,7 +59,7 @@ const route = useRoute()
 const authStore = useAuthStore()
 
 // 品牌名称（登录页默认显示，稍后从后端公开接口加载）
-const brandName = ref('沃迪森数字档案管理系统')
+const brandName = ref('XXX数字档案管理系统')
 
 onMounted(() => {
   const storedToken = localStorage.getItem('token')
