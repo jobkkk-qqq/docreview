@@ -163,7 +163,7 @@ if __name__ == "__main__":
         time.sleep(60)
 
     print("═" * 50)
-    print("  DocReview V1.0 — 沃迪森数字档案管理系统")
+    print("  DocReview V1.0 — XXX数字档案管理系统")
     print("  正在启动，请稍候...")
     print("═" * 50)
     print(f"  数据库：{DB_PATH}")
