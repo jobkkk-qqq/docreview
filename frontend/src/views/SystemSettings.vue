@@ -224,7 +224,7 @@ const commonFileTypes = [
 
 // 默认配置
 const defaultSettings = {
-  brand_name: '沃迪森数字档案管理系统',
+  brand_name: 'XXX数字档案管理系统',
   storage_path: '',
   max_file_size: 50,
   allowed_file_types: ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt'],
