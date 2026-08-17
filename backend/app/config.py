@@ -22,7 +22,7 @@ class Settings:
     """应用全局配置"""
 
     # ── 项目基础 ──────────────────────────────────────────────
-    PROJECT_NAME: str = "沃迪森数字档案管理系统"
+    PROJECT_NAME: str = "XXX数字档案管理系统"
     PROJECT_VERSION: str = "0.1.0"
     API_PREFIX: str = "/api"
 
