@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+sqlalchemy[asyncio]
+asyncpg
+aiosqlite
+pydantic[email]
+python-jose[cryptography]
+bcrypt
+python-multipart
+alembic
+aiofiles
+
+# 测试依赖
+pytest
+pytest-asyncio
+httpx

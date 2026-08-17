@@ -1,0 +1,28 @@
+# DocReview V1.0 — Windows 依赖清单
+# 安装命令：pip install -r requirements-win.txt
+
+# ── Web 框架 ──
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+aiofiles>=24.1.0
+
+# ── 数据库 ──
+sqlalchemy[asyncio]>=2.0.0
+aiosqlite>=0.20.0
+
+# ── 认证 ──
+python-jose[cryptography]>=3.3.0
+bcrypt>=4.0.0
+passlib[bcrypt]>=1.7.4
+
+# ── 数据校验 ──
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+email-validator>=2.0.0
+
+# ── 工具 ──
+python-multipart>=0.0.9
+PyYAML>=6.0
+
+# ── PDF 水印 ──
+PyMuPDF>=1.23.0

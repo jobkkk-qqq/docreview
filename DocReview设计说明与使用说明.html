@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DocReview V1.0 — 设计说明与使用说明</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --accent: #7c3aed;
+            --bg: #f8fafc;
+            --surface: #ffffff;
+            --text: #1e293b;
+            --text-secondary: #64748b;
+            --border: #e2e8f0;
+            --code-bg: #f1f5f9;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --table-header: #f8fafc;
+            --sidebar-width: 260px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.7;
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* ── Sidebar ── */
+        .sidebar {
+            width: var(--sidebar-width);
+            background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+            color: #cbd5e1;
+            position: fixed;
+            top: 0; left: 0; bottom: 0;
+            overflow-y: auto;
+            z-index: 100;
+            padding: 0;
+        }
+
+        .sidebar-header {
+            padding: 28px 22px 20px;
+            border-bottom: 1px solid rgba(255,255,255,.08);
+        }
+
+        .sidebar-header h1 {
+            font-size: 18px;
+            font-weight: 700;
+            color: #f8fafc;
+            letter-spacing: -.3px;
+        }
+
+        .sidebar-header p {
+            font-size: 12px;
+            color: #94a3b8;
+            margin-top: 4px;
+        }
+
+        .sidebar nav { padding: 12px 0; }
+
+        .nav-section {
+            padding: 10px 22px 6px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: .08em;
+            color: #64748b;
+            margin-top: 8px;
+        }
+
+        .nav-section:first-child { margin-top: 0; }
+
+        .nav-link {
+            display: block;
+            padding: 7px 22px;
+            color: #94a3b8;
+            text-decoration: none;
+            font-size: 13.5px;
+            border-left: 3px solid transparent;
+            transition: all .15s ease;
+        }
+
+        .nav-link:hover {
+            color: #e2e8f0;
+            background: rgba(255,255,255,.05);
+            border-left-color: var(--primary);
+        }
+
+        .nav-link.active {
+            color: #f8fafc;
+            background: rgba(37,99,235,.15);
+            border-left-color: var(--primary);
+        }
+
+        /* ── Main ── */
+        .main {
+            margin-left: var(--sidebar-width);
+            flex: 1;
+            min-width: 0;
+        }
+
+        .topbar {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 16px 40px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 50;
+        }
+
+        .topbar-title {
+            font-size: 15px;
+            color: var(--text-secondary);
+        }
+
+        .topbar-title strong { color: var(--text); }
+
+        .back-to-top {
+            font-size: 13px;
+            color: var(--primary);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .content {
+            max-width: 900px;
+            padding: 40px 48px 80px;
+        }
+
+        /* ── Typography ── */
+        h2 {
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text);
+            margin: 48px 0 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid var(--primary);
+            display: inline-block;
+            letter-spacing: -.3px;
+        }
+
+        h2:first-child { margin-top: 0; }
+
+        h3 {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text);
+            margin: 28px 0 12px;
+            padding-left: 12px;
+            border-left: 4px solid var(--accent);
+        }
+
+        h4 {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text);
+            margin: 20px 0 8px;
+        }
+
+        p { margin-bottom: 12px; }
+
+        /* ── Hero card ── */
+        .hero {
+            background: linear-gradient(135deg, #1e3a8a 0%, #7c3aed 100%);
+            color: white;
+            border-radius: 16px;
+            padding: 36px 40px;
+            margin-bottom: 40px;
+        }
+
+        .hero h1 {
+            font-size: 28px;
+            font-weight: 800;
+            margin-bottom: 10px;
+            letter-spacing: -.5px;
+        }
+
+        .hero-meta {
+            font-size: 13px;
+            opacity: .8;
+            margin-bottom: 20px;
+        }
+
+        .hero-desc {
+            font-size: 15px;
+            line-height: 1.8;
+            opacity: .95;
+        }
+
+        /* ── Tables ── */
+        .table-wrap {
+            overflow-x: auto;
+            margin: 16px 0 24px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+            background: var(--surface);
+        }
+
+        th {
+            background: linear-gradient(135deg, #f1f5f9, #e2e8f0);
+            color: var(--text);
+            font-weight: 600;
+            text-align: left;
+            padding: 11px 16px;
+            white-space: nowrap;
+            border-bottom: 2px solid var(--border);
+        }
+
+        td {
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+        }
+
+        tr:last-child td { border-bottom: none; }
+
+        tr:hover td { background: #f8fafc; }
+
+        /* ── Code ── */
+        code {
+            background: var(--code-bg);
+            padding: 2px 7px;
+            border-radius: 4px;
+            font-size: 13px;
+            font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+            color: #be185d;
+        }
+
+        pre {
+            background: #0f172a;
+            color: #e2e8f0;
+            border-radius: 10px;
+            padding: 20px 24px;
+            overflow-x: auto;
+            margin: 16px 0 24px;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        pre code {
+            background: none;
+            color: inherit;
+            padding: 0;
+            font-size: 13px;
+        }
+
+        /* ── Lists ── */
+        ul, ol {
+            padding-left: 22px;
+            margin: 10px 0 18px;
+        }
+
+        li { margin-bottom: 6px; font-size: 14.5px; }
+
+        /* ── Highlights / Callouts ── */
+        .callout {
+            border-radius: 10px;
+            padding: 14px 18px;
+            margin: 16px 0 24px;
+            font-size: 14px;
+            display: flex;
+            gap: 12px;
+            align-items: flex-start;
+        }
+
+        .callout-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+
+        .callout-info    { background: #eff6ff; border-left: 4px solid var(--primary); }
+        .callout-tip     { background: #f0fdf4; border-left: 4px solid var(--success); }
+        .callout-warning { background: #fffbeb; border-left: 4px solid var(--warning); }
+        .callout-danger  { background: #fef2f2; border-left: 4px solid var(--danger); }
+
+        /* ── Permission layers ── */
+        .layer-list { list-style: none; padding: 0; }
+        .layer-list li {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-bottom: 8px;
+            font-size: 14px;
+            display: flex;
+            gap: 12px;
+            align-items: flex-start;
+        }
+
+        .layer-num {
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            color: white;
+            border-radius: 50%;
+            width: 26px; height: 26px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: 700;
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
+
+        /* ── Step list ── */
+        .step-list { list-style: none; padding: 0; counter-reset: step; }
+        .step-list li {
+            counter-increment: step;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px 16px 14px 52px;
+            margin-bottom: 8px;
+            position: relative;
+            font-size: 14px;
+        }
+        .step-list li::before {
+            content: counter(step);
+            position: absolute;
+            left: 14px; top: 13px;
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            color: white;
+            width: 26px; height: 26px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        /* ── Feature grid ── */
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 12px;
+            margin: 16px 0 24px;
+        }
+
+        .feature-item {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px;
+            font-size: 13.5px;
+        }
+
+        .feature-item strong {
+            display: block;
+            color: var(--primary-dark);
+            margin-bottom: 4px;
+            font-size: 14px;
+        }
+
+        .feature-item span { color: var(--text-secondary); line-height: 1.5; }
+
+        /* ── Badge ── */
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .badge-blue  { background: #dbeafe; color: #1d4ed8; }
+        .badge-green { background: #dcfce7; color: #16a34a; }
+        .badge-purple{ background: #f3e8ff; color: #7c3aed; }
+        .badge-amber { background: #fef3c7; color: #b45309; }
+        .badge-red   { background: #fee2e2; color: #dc2626; }
+
+        /* ── Divider ── */
+        hr {
+            border: none;
+            height: 1px;
+            background: var(--border);
+            margin: 40px 0;
+        }
+
+        /* ── TOC highlight ── */
+        .toc-badge {
+            display: inline-block;
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            color: white;
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        /* ── Scroll spy active ── */
+        .nav-link.active { background: rgba(37,99,235,.12); }
+
+        /* ── Responsive ── */
+        @media (max-width: 900px) {
+            .sidebar { display: none; }
+            .main { margin-left: 0; }
+            .content { padding: 24px 20px 60px; }
+            .topbar { padding: 14px 20px; }
+        }
+
+        /* ── Print ── */
+        @media print {
+            .sidebar, .topbar { display: none; }
+            .main { margin-left: 0; }
+            .content { padding: 20px; }
+            a { text-decoration: none; color: inherit; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- ══════════ Sidebar ══════════ -->
+<aside class="sidebar">
+    <div class="sidebar-header">
+        <h1>📋 DocReview</h1>
+        <p>设计说明 · 使用说明</p>
+    </div>
+    <nav>
+        <div class="nav-section">概览</div>
+        <a class="nav-link active" href="#overview">系统概述</a>
+        <a class="nav-link" href="#architecture">架构设计</a>
+
+        <div class="nav-section">架构</div>
+        <a class="nav-link" href="#techstack">技术栈</a>
+        <a class="nav-link" href="#structure">目录结构</a>
+        <a class="nav-link" href="#modes">服务运行模式</a>
+        <a class="nav-link" href="#models">数据模型</a>
+        <a class="nav-link" href="#mechanisms">关键设计机制</a>
+
+        <div class="nav-section">功能模块</div>
+        <a class="nav-link" href="#auth">认证与账号</a>
+        <a class="nav-link" href="#user-mgmt">用户与部门管理</a>
+        <a class="nav-link" href="#rbac">角色与权限（RBAC）</a>
+        <a class="nav-link" href="#categories">分类管理</a>
+        <a class="nav-link" href="#documents">文档管理</a>
+        <a class="nav-link" href="#preview">预览与转换</a>
+        <a class="nav-link" href="#dedup">文件去重</a>
+        <a class="nav-link" href="#dashboard">仪表盘</a>
+        <a class="nav-link" href="#audit">审计日志</a>
+        <a class="nav-link" href="#config">系统配置</a>
+        <a class="nav-link" href="#tray">系统托盘</a>
+        <a class="nav-link" href="#selfheal">数据自修复</a>
+
+        <div class="nav-section">使用</div>
+        <a class="nav-link" href="#install">安装与启动</a>
+        <a class="nav-link" href="#login">登录</a>
+        <a class="nav-link" href="#user-guide">普通用户操作</a>
+        <a class="nav-link" href="#admin-guide">管理员操作</a>
+        <a class="nav-link" href="#backup">数据备份与迁移</a>
+        <a class="nav-link" href="#faq">常见问题</a>
+
+        <div class="nav-section">版本</div>
+        <a class="nav-link" href="#changelog">版本记录</a>
+    </nav>
+</aside>
+
+<!-- ══════════ Main Content ══════════ -->
+<div class="main">
+    <div class="topbar">
+        <span class="topbar-title"><strong>DocReview V1.0</strong> — 设计说明与使用说明</span>
+        <a class="back-to-top" href="#top">↑ 回到顶部</a>
+    </div>
+
+    <div class="content">
+
+        <!-- Hero -->
+        <div class="hero" id="top">
+            <span class="toc-badge">沃迪森数字档案管理系统</span>
+            <h1>DocReview V1.0</h1>
+            <div class="hero-meta">版本：V1.0　|　更新日期：2026-08-15　|　适用平台：Windows 10 / 11（64 位）</div>
+            <div class="hero-desc">
+                DocReview 是面向企业内部的数字档案管理系统，实现文档的<strong>上传、存储、分类、预览、下载、审核、权限控制与审计追溯</strong>全流程管理。系统以 Windows 便携版形式交付，双击即可运行，无需安装 Python、Node.js 等运行环境。
+            </div>
+        </div>
+
+        <!-- ── 一、系统概述 ── -->
+        <section id="overview">
+            <h2>一、系统概述</h2>
+            <p>系统核心能力一览：</p>
+            <div class="feature-grid">
+                <div class="feature-item">
+                    <strong>📦 全生命周期管理</strong>
+                    <span>上传 → 分类 → 审核 → 预览 → 下载 → 删除 → 恢复</span>
+                </div>
+                <div class="feature-item">
+                    <strong>🔐 细粒度权限控制（RBAC）</strong>
+                    <span>角色权限、菜单权限、文档级/分类级权限四层控制</span>
+                </div>
+                <div class="feature-item">
+                    <strong>👁️ 在线预览</strong>
+                    <span>Office 自动转 PDF 预览，支持水印与移动端阅读</span>
+                </div>
+                <div class="feature-item">
+                    <strong>🔍 重复文件检测</strong>
+                    <span>基于 SHA-256 内容哈希，上传时自动提醒</span>
+                </div>
+                <div class="feature-item">
+                    <strong>📝 全程审计</strong>
+                    <span>登录、上传、下载、删除、审核等操作全部留痕</span>
+                </div>
+                <div class="feature-item">
+                    <strong>🛠️ 数据自修复</strong>
+                    <span>启动时自动扫描仓库，修复文件路径与 PDF 关联</span>
+                </div>
+                <div class="feature-item">
+                    <strong>🖥️ 系统托盘管理</strong>
+                    <span>常驻托盘，一键打开、查看日志、开机自启动、退出</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- ── 二、架构设计 ── -->
+        <section id="architecture">
+            <h2>二、系统架构设计</h2>
+
+            <h3 id="techstack">2.1 技术栈</h3>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>层次</th><th>技术选型</th></tr></thead>
+                    <tbody>
+                        <tr><td>前端</td><td>Vue 3 + Element Plus + Vite，单页应用（SPA）</td></tr>
+                        <tr><td>后端</td><td>Python 3.10 + FastAPI + SQLAlchemy（异步 ORM）</td></tr>
+                        <tr><td>数据库</td><td>SQLite（aiosqlite 驱动），单文件存储，自动迁移</td></tr>
+                        <tr><td>桌面集成</td><td>PyInstaller 打包，ctypes 实现 Windows 系统托盘</td></tr>
+                        <tr><td>文档转换</td><td>LibreOffice 命令行（soffice.com）后台异步转 PDF</td></tr>
+                        <tr><td>水印渲染</td><td>PyMuPDF（fitz），45° 斜角阵列水印</td></tr>
+                        <tr><td>认证机制</td><td>JWT（jose 库），Bearer Token 请求头</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h3 id="structure">2.2 目录结构</h3>
+            <pre><code>DocReview-Windows/
+├── DocReview.exe            # 程序启动入口（双击运行）
+├── docreview.log            # 运行日志文件
+├── 使用说明.txt             # 快速上手说明
+├── backend/
+│   └── docreview.db         # SQLite 数据库
+├── frontend/
+│   └── dist/                # 前端编译产物（请勿修改）
+└── doc-repo/                # 文档文件存储目录
+    ├── 2026/08/…            # 按年/月目录归档，文件名 UUID.扩展名
+    └── draft/…              # 回收站目录（软删除文档暂存）</code></pre>
+
+            <h3 id="modes">2.3 服务运行模式</h3>
+            <p>程序双击启动后，在同一进程内拉起两个本地服务：</p>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>服务</th><th>地址</th><th>用途</th></tr></thead>
+                    <tbody>
+                        <tr><td>前端静态服务</td><td><code>http://127.0.0.1:3000</code></td><td>提供浏览器访问的页面</td></tr>
+                        <tr><td>后端 API 服务</td><td><code>http://127.0.0.1:9002</code></td><td>提供全部业务接口，含 <code>/docs</code> 在线接口文档</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="callout callout-info">
+                <span class="callout-icon">💡</span>
+                <span>启动流程：后端线程 → 前端线程 → 系统托盘（主线程）。后端启动时自动执行数据库建表、schema 迁移、文档仓库扫描修复三项初始化工作。</span>
+            </div>
+
+            <h3 id="models">2.4 数据模型</h3>
+            <p>数据库共 <strong>11 张</strong>核心表：</p>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>表名</th><th>说明</th><th>关键字段</th></tr></thead>
+                    <tbody>
+                        <tr><td><code>users</code></td><td>用户</td><td>username、display_name、department_id、role_id、is_active</td></tr>
+                        <tr><td><code>roles</code></td><td>角色</td><td>name、code、is_business_role、business_scope、permission_version</td></tr>
+                        <tr><td><code>permissions</code></td><td>权限</td><td>code、name、permission_type、parent_code、menu_key</td></tr>
+                        <tr><td><code>user_roles</code></td><td>用户-角色关联</td><td>user_id、role_id（多对多）</td></tr>
+                        <tr><td><code>role_permissions</code></td><td>角色-权限关联</td><td>role_id、permission_id（多对多）</td></tr>
+                        <tr><td><code>departments</code></td><td>部门</td><td>name、description</td></tr>
+                        <tr><td><code>categories</code></td><td>文档分类</td><td>name、code、is_public、business_type、sort_order</td></tr>
+                        <tr><td><code>documents</code></td><td>文档</td><td>doc_no、title、file_path、pdf_path、content_hash、status、confidential_level</td></tr>
+                        <tr><td><code>document_permissions</code></td><td>文档权限</td><td>document_id、user_id、role_id、can_view/can_download/can_edit/can_print</td></tr>
+                        <tr><td><code>category_permissions</code></td><td>分类权限</td><td>category_id、user_id、role_id、can_view/can_edit</td></tr>
+                        <tr><td><code>audit_logs</code></td><td>审计日志</td><td>user_id、action、target_type、target_id、detail、ip_address</td></tr>
+                        <tr><td><code>system_configs</code></td><td>系统配置</td><td>key、value、description（含 schema_version）</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h3 id="mechanisms">2.5 关键设计机制</h3>
+            <div class="callout callout-tip">
+                <span class="callout-icon">🗑️</span>
+                <div><strong>软删除与回收站</strong>：文档删除时物理文件移入 <code>doc-repo/draft/</code> 目录，数据库标记 <code>is_deleted</code>，管理员可在系统配置页恢复。</div>
+            </div>
+            <div class="callout callout-info">
+                <span class="callout-icon">📁</span>
+                <div><strong>文件存储命名</strong>：上传文件以 <code>年/月/UUID.扩展名</code> 存储，UUID 命名避免重名冲突；原始文件名保留在数据库字段中。</div>
+            </div>
+            <div class="callout callout-info">
+                <span class="callout-icon">🔄</span>
+                <div><strong>数据库自动迁移</strong>：<code>system_configs</code> 表记录 <code>schema_version</code>，启动时若版本落后则依次执行迁移（当前 v4），已包含字段回填等数据修复逻辑。</div>
+            </div>
+            <div class="callout callout-warning">
+                <span class="callout-icon">👁️</span>
+                <div><strong>权限可见性过滤</strong>：普通用户只能看到公开分类文档、本人上传的文档、以及被显式授权的文档；超级管理员可见全部。</div>
+            </div>
+        </section>
+
+        <hr>
+
+        <!-- ── 三、功能模块设计 ── -->
+        <section id="modules">
+            <h2>三、功能模块设计</h2>
+
+            <h3 id="auth">3.1 认证与账号</h3>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>功能</th><th>接口</th><th>说明</th></tr></thead>
+                    <tbody>
+                        <tr><td>用户登录</td><td><code>POST /auth/login</code></td><td>用户名+密码校验，签发 JWT</td></tr>
+                        <tr><td>令牌刷新</td><td><code>POST /auth/refresh</code></td><td>延长会话有效期</td></tr>
+                        <tr><td>用户登出</td><td><code>POST /auth/logout</code></td><td>注销会话</td></tr>
+                        <tr><td>修改密码</td><td><code>POST /auth/change-password</code></td><td>校验原密码后更新</td></tr>
+                        <tr><td>重置密码</td><td><code>PUT /users/{id}/reset-password</code></td><td>管理员为用户重置（≥6 位）</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="callout callout-info">
+                <span class="callout-icon">💡</span>
+                <span>前端路由守卫拦截未登录访问，Token 存于 localStorage，请求自动携带；401 时自动跳转登录页。</span>
+            </div>
+
+            <h3 id="user-mgmt">3.2 用户与部门管理</h3>
+            <h4>用户管理（系统管理员）</h4>
+            <ul>
+                <li>用户新增、编辑、彻底删除（硬删除）</li>
+                <li>分配主角色 + 多个附加角色</li>
+                <li>启用 / 禁用账号、重置密码</li>
+                <li>按关键词、部门、角色、状态组合筛选</li>
+            </ul>
+            <h4>部门管理（系统管理员）</h4>
+            <ul>
+                <li>部门增删改查，部门树展示</li>
+                <li>用户归属部门，用于批量授权场景</li>
+            </ul>
+
+            <h3 id="rbac">3.3 角色与权限管理（RBAC）</h3>
+            <p>权限体系共四层：</p>
+            <ol class="layer-list">
+                <li><span class="layer-num">1</span><div><strong>角色-功能权限</strong>：每个角色可勾选菜单功能权限（如"文档管理""上传文档""用户管理"），形成菜单功能树</div></li>
+                <li><span class="layer-num">2</span><div><strong>业务角色默认权限</strong>：业务角色（quality/admin/hr/finance 等）自动继承对应业务范围的默认权限，无需逐项配置</div></li>
+                <li><span class="layer-num">3</span><div><strong>文档级权限</strong>：单篇文档可授予用户/角色"查看、下载、编辑、打印"权限</div></li>
+                <li><span class="layer-num">4</span><div><strong>分类级权限</strong>：分类可设置"全员可见"，或按用户/角色授权查看、编辑</div></li>
+            </ol>
+            <div class="callout callout-warning">
+                <span class="callout-icon">⚡</span>
+                <div><strong>权限矩阵页</strong>是核心配置入口：Tab1 菜单功能权限按角色勾选，带乐观锁（permission_version）防并发冲突；Tab2 文档权限按分类分组，逐文档勾选预览/下载/编辑/删除，支持整行全选。</div>
+            </div>
+
+            <h3 id="categories">3.4 分类管理</h3>
+            <ul>
+                <li>分类增删改查，支持排序与启用/停用</li>
+                <li>每个分类可绑定<strong>业务类型</strong>（quality/admin/hr/finance/legal/procurement/production）</li>
+                <li>开启"全员可见"后所有登录用户默认可查看该分类文档</li>
+                <li>业务用户的分类下拉自动推荐匹配其业务类型的分类</li>
+            </ul>
+
+            <h3 id="documents">3.5 文档管理（核心模块）</h3>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>功能</th><th>说明</th></tr></thead>
+                    <tbody>
+                        <tr><td><span class="badge badge-blue">单文件上传</span></td><td>填写标题（必填）、编号（自动生成年月+流水号）、分类、密级、描述；可选授权角色</td></tr>
+                        <tr><td><span class="badge badge-green">批量上传</span></td><td>统一分类/密级/描述/授权角色，多文件提交，标题自动取文件名；结果对话框展示成功/失败明细</td></tr>
+                        <tr><td><span class="badge badge-amber">上传校验</span></td><td>白名单格式（pdf/doc/docx/xls/xlsx/ppt/pptx/txt/jpg/png/zip/rar）、单文件 ≤50MB（可配置）</td></tr>
+                        <tr><td><span class="badge badge-purple">重复检测</span></td><td>上传时计算 SHA-256，与库中未删除文档比对，重复则 409 提示并显示已存在文档，可跳转查看</td></tr>
+                        <tr><td>列表浏览</td><td>按分类分组展示（可折叠）；卡片/列表双视图；关键词+分类+密级组合搜索；<strong>组内分页</strong>（每分类独立翻页，每页30条，翻页只刷新当前组不影响其他组）</td></tr>
+                        <tr><td>详情查看</td><td>编号、标题、分类、密级、上传人、时间、大小、格式、描述</td></tr>
+                        <tr><td>在线预览</td><td>Office 后台转 PDF 后内嵌预览；PDF 直接预览；txt/md 文本预览；图片预览；移动端走浏览器原生阅读器</td></tr>
+                        <tr><td>水印保护</td><td>非公开文档预览时叠加"用户名+日期"斜角水印</td></tr>
+                        <tr><td>下载</td><td>权限校验后返回文件流；预览/下载行为均记录日志</td></tr>
+                        <tr><td>编辑</td><td>修改编号、标题、描述、分类、密级（需 modify_doc 权限）</td></tr>
+                        <tr><td>审核</td><td>待审核文档可审核为通过/驳回（approved/rejected），留审核意见</td></tr>
+                        <tr><td>删除</td><td>软删除，文件移入回收站（需 delete_doc 权限）</td></tr>
+                        <tr><td>恢复</td><td>系统配置页"文档恢复"区，仅超级管理员可恢复已删除文档</td></tr>
+                        <tr><td>权限管理</td><td>单文档授权/撤销；多选批量授权（按部门、按用户、按角色）</td></tr>
+                        <tr><td>打印日志</td><td>打印行为上报审计（print_doc）</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h3 id="preview">3.6 文档预览与转换</h3>
+            <ul>
+                <li>Office 文件（doc/docx/xls/xlsx/ppt/pptx）上传后由 <strong>LibreOffice 命令行</strong>在后台异步转换为 PDF，不阻塞上传流程；转换失败不影响上传成功</li>
+                <li>转换产物以同名 <code>.pdf</code> 保存在原文件同目录</li>
+                <li>预览接口对非公开文档动态生成带水印的 PDF 临时文件，预览结束自动清理</li>
+                <li><strong>仓库自修复</strong>：应用启动时后台扫描 <code>doc-repo/</code>，为已有 Office 文档自动关联磁盘上存在的 PDF（按 UUID 同名匹配），修正失效路径</li>
+            </ul>
+
+            <h3 id="dedup">3.7 文件去重机制</h3>
+            <ul>
+                <li>上传时计算文件内容 SHA-256 哈希，存入 <code>documents.content_hash</code></li>
+                <li>重复定义：与任意未删除文档哈希值相同即视为重复</li>
+                <li>单文件上传触发 409 冲突时，前端弹出"文件重复提示"对话框，用户可选择取消或查看已存在文档</li>
+                <li>批量上传时，重复文件在结果列表中标记为黄色"文件重复"提示</li>
+                <li>历史数据兼容：v4 数据库迁移自动回填存量文档的 content_hash</li>
+            </ul>
+
+            <h3 id="dashboard">3.8 仪表盘</h3>
+            <ul>
+                <li>统计卡片：文档总数、近 7 天新增、分类数量、用户数量</li>
+                <li>最近上传文档列表（10 条）</li>
+                <li>快捷搜索与常用操作入口（按权限显示）</li>
+            </ul>
+
+            <h3 id="audit">3.9 操作日志（审计）</h3>
+            <ul>
+                <li>全量记录：登录、登出、上传、下载、删除、打印、预览、审核、新增、修改等 <strong>10 类</strong>操作</li>
+                <li>记录维度：操作人、操作类型、资源类型与 ID、详情（JSON）、IP、时间</li>
+                <li>支持按用户名、操作类型、时间范围筛选；分页浏览</li>
+                <li>支持导出审计日志</li>
+            </ul>
+
+            <h3 id="config">3.10 系统配置</h3>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>配置项</th><th>说明</th></tr></thead>
+                    <tbody>
+                        <tr><td>文档存储路径</td><td>服务端绝对路径，可在界面修改</td></tr>
+                        <tr><td>单文件大小限制</td><td>1–500 MB，默认 50 MB</td></tr>
+                        <tr><td>文件类型白名单</td><td>可多选并自定义扩展名</td></tr>
+                        <tr><td>启用水印 / 水印文字</td><td>控制预览水印</td></tr>
+                        <tr><td>自动审核</td><td>开启后公开文档上传自动通过审核</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h3 id="tray">3.11 系统托盘（桌面集成）</h3>
+            <ul>
+                <li>程序常驻 Windows 托盘，不显示命令行窗口</li>
+                <li>左键单击：浏览器打开系统</li>
+                <li>右键菜单：打开 DocReview / 查看运行日志 / 开机自启动开关 / 停止服务并退出</li>
+                <li>悬浮提示实时显示后端健康状态</li>
+                <li>开机自启动通过注册表实现，带 60 秒延迟参数，等待系统就绪</li>
+            </ul>
+
+            <h3 id="selfheal">3.12 数据自修复机制</h3>
+            <div class="callout callout-tip">
+                <span class="callout-icon">🔧</span>
+                <div>
+                    针对管理员直接操作文件系统导致的脏数据，系统提供两类自动修复：
+                    <ul style="margin-top:8px;margin-bottom:0;">
+                        <li>列表中物理文件已不存在的文档 → <strong>自动标记为已删除</strong></li>
+                        <li>已删除列表中物理文件已不存在的记录 → <strong>自动永久清理</strong>（避免"文件无法恢复但仍显示"的脏数据）</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <hr>
+
+        <!-- ── 四、使用说明 ── -->
+        <section id="usage">
+            <h2>四、使用说明</h2>
+
+            <h3 id="install">4.1 安装与启动</h3>
+            <ol class="step-list">
+                <li>将 <code>DocReview-Windows</code> 文件夹整体复制到目标电脑任意位置（建议路径不含中文和空格）</li>
+                <li>双击 <code>DocReview.exe</code>，程序自动启动前后端服务（无黑色窗口）</li>
+                <li>浏览器访问 <code>http://127.0.0.1:3000</code> 打开登录页（程序启动后不再自动打开浏览器，可单击托盘图标）</li>
+                <li>使用管理员账号登录</li>
+            </ol>
+
+            <h3 id="login">4.2 登录</h3>
+            <ul>
+                <li>输入用户名与密码（密码至少 6 位）</li>
+                <li>登录后页面按角色权限自动显示可用菜单</li>
+                <li>登出后自动清理本地会话</li>
+            </ul>
+
+            <h3 id="user-guide">4.3 普通用户日常操作</h3>
+            <ol class="step-list">
+                <li><strong>上传文档</strong>：进入"文档上传"，选择单文件或批量模式，填写分类与密级后提交；若文件重复会收到提示</li>
+                <li><strong>查找文档</strong>：进入"文档管理"，使用关键词/分类/密级搜索；或按分类展开浏览</li>
+                <li><strong>预览文档</strong>：点击文档行"预览"，Office 文件自动转 PDF 展示，预览页带个人水印</li>
+                <li><strong>下载文档</strong>：点击"下载"，浏览器保存文件</li>
+                <li><strong>查看操作记录</strong>：被授权后可查看操作日志，掌握文档动态</li>
+            </ol>
+
+            <h3 id="admin-guide">4.4 管理员日常操作</h3>
+            <ol class="step-list">
+                <li><strong>账号管理</strong>：用户管理页创建账号、分配部门与角色、启用禁用、重置密码</li>
+                <li><strong>权限配置</strong>：权限矩阵页为角色配置菜单功能与文档权限</li>
+                <li><strong>文档管控</strong>：文档管理页可编辑、删除任意有权文档；系统配置页可恢复回收站文档</li>
+                <li><strong>系统配置</strong>：调整存储路径、文件大小限制、水印、自动审核等</li>
+                <li><strong>审计追溯</strong>：操作日志页按条件检索全量操作记录并导出</li>
+            </ol>
+
+            <h3 id="backup">4.5 数据备份与迁移</h3>
+            <p>升级或迁移时请备份以下内容：</p>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>需备份</th><th>位置</th></tr></thead>
+                    <tbody>
+                        <tr><td>数据库</td><td><code>backend/docreview.db</code></td></tr>
+                        <tr><td>文档文件</td><td><code>doc-repo/</code> 整个目录</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="callout callout-tip">
+                <span class="callout-icon">✅</span>
+                <span>备份后在目标机器启动即可恢复全部数据与文件。</span>
+            </div>
+
+            <h3 id="faq">4.6 常见问题</h3>
+
+            <div class="callout callout-info">
+                <span class="callout-icon">Q1</span>
+                <div><strong>双击后浏览器没有自动打开？</strong><br>新版已取消启动自动打开浏览器，单击系统托盘图标或手动访问 <code>http://127.0.0.1:3000</code> 即可。</div>
+            </div>
+            <div class="callout callout-warning">
+                <span class="callout-icon">Q2</span>
+                <div><strong>上传的 Office 文件无法预览？</strong><br>系统依赖 LibreOffice 将 Office 转 PDF。若目标电脑未安装 LibreOffice，可在标准安装路径安装，或将便携版放入程序目录 <code>libreoffice/program/</code> 下。</div>
+            </div>
+            <div class="callout callout-danger">
+                <span class="callout-icon">Q3</span>
+                <div><strong>文件上传提示"文件重复"？</strong><br>说明相同内容的文件已存在于系统中。可在提示框中查看已存在文档，确认后取消上传，避免重复归档。</div>
+            </div>
+            <div class="callout callout-info">
+                <span class="callout-icon">Q4</span>
+                <div><strong>管理员在磁盘上删了文件，用户端列表未更新？</strong><br>系统具备自修复机制：列表刷新时自动检测物理文件缺失并标记删除；已删除列表中的无效记录会自动清理。</div>
+            </div>
+            <div class="callout callout-info">
+                <span class="callout-icon">Q5</span>
+                <div><strong>如何修改端口？</strong><br>在 <code>DocReview.exe</code> 同级目录新建 <code>.env</code> 文件：<br><code style="margin-top:6px;display:block;">BACKEND_URL=http://127.0.0.1:9002<br>FRONTEND_URL=http://127.0.0.1:3000</code></div>
+            </div>
+            <div class="callout callout-info">
+                <span class="callout-icon">Q6</span>
+                <div><strong>能否开机自启？</strong><br>托盘图标右键 → "开机自启动" 勾选即可，开机后延迟 60 秒启动服务。</div>
+            </div>
+        </section>
+
+        <hr>
+
+        <!-- ── 五、版本记录 ── -->
+        <section id="changelog">
+            <h2>五、版本记录</h2>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>版本</th><th>日期</th><th>说明</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td><span class="badge badge-blue">V1.0</span></td>
+                            <td>2026-08</td>
+                            <td>初始版本；含文档全生命周期、RBAC 权限、在线预览与水印、审计日志、文件去重、数据自修复、系统托盘</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge badge-green">V1.1</span></td>
+                            <td>2026-08-15</td>
+                            <td>文档列表分组内分页：每分类独立翻页（每页30条），翻页只刷新当前组不影响其他组；修复孤儿PDF文件；清理旧版数据</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <div style="text-align:center;color:var(--text-secondary);font-size:13px;margin-top:60px;padding-top:20px;border-top:1px solid var(--border);">
+            DocReview V1.0 · 沃迪森数字档案管理系统 · 2026
+        </div>
+
+    </div>
+</div>
+
+<script>
+    // Scroll spy for sidebar navigation
+    const links = document.querySelectorAll('.nav-link');
+    const sections = [];
+    links.forEach(link => {
+        const id = link.getAttribute('href').replace('#', '');
+        const el = document.getElementById(id);
+        if (el) sections.push({ id, el, link });
+    });
+
+    function onScroll() {
+        let current = sections[0];
+        for (const s of sections) {
+            if (s.el.getBoundingClientRect().top <= 120) current = s;
+        }
+        links.forEach(l => l.classList.remove('active'));
+        if (current) current.link.classList.add('active');
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+
+    // Smooth scroll for nav links
+    links.forEach(link => {
+        link.addEventListener('click', e => {
+            e.preventDefault();
+            const id = link.getAttribute('href').replace('#', '');
+            const el = document.getElementById(id);
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+    });
+</script>
+</body>
+</html>
