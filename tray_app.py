@@ -203,7 +203,7 @@ class TrayApp:
         self.hwnd = None
         self.hmenu = None
         self.hicon = None
-        self._tip = "沃迪森数字档案管理系统"
+        self._tip = "XXX数字档案管理系统"
         self._running = True
         self._lock = threading.Lock()
 
