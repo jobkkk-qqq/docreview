@@ -128,7 +128,7 @@ router.beforeEach((to, from, next) => {
 
   // 设置页面标题
   if (to.meta.title) {
-    document.title = `${to.meta.title} - 沃迪森数字档案管理系统`
+    document.title = `${to.meta.title} - XXX数字档案管理系统`
   }
 })
 
