@@ -44,7 +44,7 @@ async def get_system_brand(
     """获取系统品牌名称（公开接口，无需登录，供登录页与侧边栏显示）"""
     stmt = select(SystemConfig).where(SystemConfig.key == BRAND_NAME_KEY)
     config = (await session.execute(stmt)).scalar_one_or_none()
-    name = (config.value if config and config.value else None) or "沃迪森数字档案管理系统"
+    name = (config.value if config and config.value else None) or "XXX数字档案管理系统"
     return {"brand_name": name}
 
 
