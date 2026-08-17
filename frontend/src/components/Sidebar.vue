@@ -58,7 +58,7 @@ const authStore = useAuthStore()
 const appStore = useAppStore()
 
 // 品牌名称（从后端公开接口加载）
-const brandName = ref('沃迪森数字档案管理系统')
+const brandName = ref('XXX数字档案管理系统')
 
 onMounted(async () => {
   try {
