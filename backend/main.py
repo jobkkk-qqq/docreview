@@ -69,7 +69,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.PROJECT_VERSION,
-    description="沃迪森数字档案管理系统后端 API",
+    description="XXX数字档案管理系统后端 API",
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",

@@ -59,7 +59,7 @@
           <div v-if="tab.name === 'menu' && selectedRoleId" class="menu-perm-panel">
             <div class="panel-header">
               <div class="panel-tips">
-                <el-tag size="small" type="info">带「默认」标签的为业务角色自动继承权限，可自由修改，保存后将变为显式权限</el-tag>
+                <el-tag size="small" type="info">权限全部由管理员自由配置，保存后立即对该角色生效</el-tag>
               </div>
               <el-button type="primary" :loading="menuSaving" :icon="Plus" @click="saveMenuPermissions">
                 保存菜单功能权限

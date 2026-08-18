@@ -9,13 +9,8 @@ from app.models.user import User
 
 DEFAULT_PERMISSIONS = {
     "base": ["view_doc_list", "view_doc_detail", "download_doc", "print_doc"],
-    # 业务角色默认获得其对应分类的上传、修改权限
-    "quality": ["upload_doc", "modify_doc"],
-    "admin": ["upload_doc", "modify_doc", "view_dashboard", "manage_categories", "manage_departments"],
-    "hr": ["upload_doc", "modify_doc"],
-    "finance": ["upload_doc", "modify_doc"],
-    # 文档管理员 / 系统管理员
-    "doc_admin": ["upload_doc", "modify_doc", "delete_doc", "manage_doc_permissions", "manage_categories", "view_audit_logs"],
+    # 已取消业务角色默认权限：upload_doc、modify_doc 等权限不再自动继承，
+    # 全部由管理员在“权限矩阵”中按角色显式配置，可自由授予或取消
 }
 
 
@@ -139,6 +134,8 @@ def get_document_visibility_filter(user: User):
     role_ids = user.all_role_ids
 
     conditions = [
+        # 上传者始终可见自己上传的文档（即使未选择授权角色）
+        Document.uploaded_by == user.id,
         Document.category_id.in_(
             select(Category.id).where(Category.is_public == True)
         )
@@ -219,7 +216,7 @@ def can_user_download_document(user: User, document: Document) -> bool:
 
 
 def get_user_effective_permissions(user: User) -> list[str]:
-    """获取用户的所有有效权限码（包含默认权限）"""
+    """获取用户的所有有效权限码（基础权限 + 角色显式权限，不再自动继承业务默认权限）"""
     all_perms = set()
 
     all_perms.update(DEFAULT_PERMISSIONS["base"])
@@ -232,23 +229,7 @@ def get_user_effective_permissions(user: User) -> list[str]:
         for p in user.role.permissions:
             all_perms.add(p.code)
 
-    business_scopes = []
-    for r in user.roles:
-        if getattr(r, "is_business_role", False) and r.business_scope:
-            business_scopes.append(r.business_scope)
-    if user.role and getattr(user.role, "is_business_role", False) and user.role.business_scope:
-        business_scopes.append(user.role.business_scope)
-
-    for scope in business_scopes:
-        if scope in DEFAULT_PERMISSIONS:
-            all_perms.update(DEFAULT_PERMISSIONS[scope])
-
     return list(all_perms)
-
-
-def get_default_permissions_for_scope(scope: str) -> list[str]:
-    """获取指定业务范围的默认权限"""
-    return DEFAULT_PERMISSIONS.get(scope, [])
 
 
 def get_user_business_scopes(user: User) -> list[str]:
@@ -270,7 +251,7 @@ def user_has_any_business_scope(user: User) -> bool:
 
 
 async def get_role_permissions_with_inherited(session: AsyncSession, role_id: int) -> dict:
-    """获取角色的显式权限与业务默认权限"""
+    """获取角色的显式权限（业务角色不再继承默认权限，inherited_permissions 恒为空）"""
     from app.models.role import Role
 
     role = await session.get(Role, role_id)
@@ -281,9 +262,8 @@ async def get_role_permissions_with_inherited(session: AsyncSession, role_id: in
     for p in role.permissions:
         granted.append(p.code)
 
+    # 业务默认权限已取消：所有权限均需管理员在权限矩阵中显式配置
     inherited = []
-    if role.is_business_role and role.business_scope:
-        inherited = list(DEFAULT_PERMISSIONS.get(role.business_scope, []))
 
     return {
         "role_id": role.id,

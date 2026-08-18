@@ -293,23 +293,12 @@ async def upload_document(
         {"title": doc_data.title, "file_name": file_name},
     )
 
-    # 自动授权：将文档权限授予上传者所在角色
+    # 文档权限：仅授予上传者显式选择的授权角色
+    # 不再自动添加上传者拥有的角色（如业务角色），也不自动继承同分类权限，
+    # 权限完全由管理员/上传者在“授权角色”中自由设定
     from app.models.document import DocumentPermission
-    from app.models.role import user_role_table
 
-    granted_role_ids = set()
-
-    # 如果上传时指定了 role_ids，优先使用
-    if role_ids:
-        granted_role_ids.update(role_ids)
-
-    # 始终添加上传者拥有的角色
-    stmt = select(user_role_table.c.role_id).where(
-        user_role_table.c.user_id == uploader.id
-    )
-    result = await session.execute(stmt)
-    for (rid,) in result:
-        granted_role_ids.add(rid)
+    granted_role_ids = set(role_ids) if role_ids else set()
 
     for rid in granted_role_ids:
         perm = DocumentPermission(
@@ -324,9 +313,6 @@ async def upload_document(
 
     if granted_role_ids:
         await session.flush()
-
-    # 分类权限继承：查询同分类下已有文档的角色权限，自动继承给新文档
-    await _inherit_category_role_permissions(session, document, uploader.id)
 
     return document
 
