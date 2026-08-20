@@ -20,8 +20,10 @@ from app.api.deps import get_current_user, get_client_ip, require_permission
 from app.config import settings
 from app.models.user import User
 from app.models.category import Category
+from app.models.department import Department
 from app.services import doc_service
 from app.services.permission_service import can_user_download_document, get_user_business_scopes
+from app.core.doc_levels import DOC_LEVELS, is_valid_doc_level
 from app.schemas.document import DocumentCreate, DocumentUpdate, DocumentReview, DocumentOut, DocumentListOut, DeletedDocumentOut, CategoryDocGroup
 from app.schemas.user import PaginatedResponse
 
@@ -48,6 +50,23 @@ def _needs_watermark(document) -> bool:
     return document.confidential_level and document.confidential_level != "public"
 
 
+async def _validate_dept_and_level(
+    session: AsyncSession, department_id: int | None, doc_level: str | None,
+) -> str:
+    """校验部门（二级分类）与文档级别（三级分类），返回规范化后的文档级别。"""
+    final_level = (doc_level or "").strip() or "无级别"
+    if not is_valid_doc_level(final_level):
+        raise HTTPException(
+            status_code=400,
+            detail=f"文档级别不合法，可选值：{'、'.join(DOC_LEVELS)}",
+        )
+    if department_id:
+        dept = await session.get(Department, department_id)
+        if dept is None or not dept.is_active:
+            raise HTTPException(status_code=400, detail="所选部门不存在或已停用")
+    return final_level
+
+
 router = APIRouter(prefix="/documents", tags=["文档管理"])
 
 
@@ -58,7 +77,9 @@ async def upload_document(
     doc_no: str = Form(None, description="文档编号，不传则自动生成"),
     summary: str = Form(None, description="文档摘要"),
     keywords: str = Form(None, description="关键词"),
-    category_id: int = Form(None, description="分类ID"),
+    category_id: int = Form(None, description="分类ID（一级分类）"),
+    department_id: int = Form(None, description="部门ID（二级分类）"),
+    doc_level: str = Form(None, description="文档级别（三级分类），不传默认为无级别"),
     confidential_level: str = Form(None, description="密级"),
     role_ids: str = Form(None, description="授权角色ID列表（逗号分隔，如 1,2,3）"),
     file: UploadFile = File(..., description="文件"),
@@ -75,6 +96,9 @@ async def upload_document(
     if file_size > max_size:
         raise HTTPException(status_code=400, detail=f"文件大小超过限制（最大 {settings.MAX_UPLOAD_SIZE_MB}MB）")
 
+    # 校验部门与文档级别
+    final_doc_level = await _validate_dept_and_level(session, department_id, doc_level)
+
     # 构建文档数据
     doc_data = DocumentCreate(
         title=title,
@@ -82,6 +106,8 @@ async def upload_document(
         summary=summary,
         keywords=keywords,
         category_id=category_id,
+        department_id=department_id,
+        doc_level=final_doc_level,
         confidential_level=confidential_level,
     )
 
@@ -127,6 +153,8 @@ async def upload_document(
 async def batch_upload_documents(
     request: Request,
     category_id: int = Form(..., description="分类ID（统一应用到所有文件）"),
+    department_id: int = Form(None, description="部门ID（二级分类，统一应用）"),
+    doc_level: str = Form(None, description="文档级别（三级分类，统一应用，默认无级别）"),
     confidential_level: str = Form("internal", description="保密等级（统一应用到所有文件）"),
     summary: str = Form(None, description="文档摘要（选填，统一应用）"),
     role_ids: str = Form(None, description="授权角色ID列表（逗号分隔，如 1,2,3）"),
@@ -137,6 +165,9 @@ async def batch_upload_documents(
     """批量上传文档：统一设置分类、保密等级和授权角色，标题自动取文件名"""
     if not files:
         raise HTTPException(status_code=400, detail="请选择要上传的文件")
+
+    # 校验部门与文档级别（在整个循环之前统一校验一次）
+    final_doc_level = await _validate_dept_and_level(session, department_id, doc_level)
 
     # 解析角色ID
     parsed_role_ids = []
@@ -161,6 +192,8 @@ async def batch_upload_documents(
             doc_data = DocumentCreate(
                 title=auto_title,
                 category_id=category_id,
+                department_id=department_id,
+                doc_level=final_doc_level,
                 confidential_level=confidential_level,
                 summary=summary,
             )
@@ -198,6 +231,8 @@ async def list_documents(
     page_size: int = Query(20, ge=1, le=100, description="每页记录数"),
     keyword: str | None = Query(None, description="搜索关键词"),
     category_id: int | None = Query(None, description="分类ID"),
+    department_id: int | None = Query(None, description="部门ID（二级分类）"),
+    doc_level: str | None = Query(None, description="文档级别（三级分类）"),
     status: str | None = Query(None, description="状态筛选"),
     confidential_level: str | None = Query(None, description="保密等级筛选"),
     uploaded_by: int | None = Query(None, description="上传者ID"),
@@ -208,6 +243,7 @@ async def list_documents(
     documents, total = await doc_service.list_documents(
         session, page=page, page_size=page_size,
         keyword=keyword, category_id=category_id,
+        department_id=department_id, doc_level=doc_level,
         status_filter=status, uploaded_by=uploaded_by,
         confidential_level=confidential_level,
         current_user=current_user,
@@ -220,6 +256,8 @@ async def list_documents(
 async def list_documents_grouped(
     keyword: str | None = Query(None, description="搜索关键词"),
     category_id: int | None = Query(None, description="分类ID"),
+    department_id: int | None = Query(None, description="部门ID（二级分类）"),
+    doc_level: str | None = Query(None, description="文档级别（三级分类）"),
     status: str | None = Query(None, description="状态筛选"),
     confidential_level: str | None = Query(None, description="保密等级筛选"),
     page: int = Query(1, ge=1, description="每个分类组内独立分页的页码"),
@@ -232,6 +270,8 @@ async def list_documents_grouped(
         session,
         keyword=keyword,
         category_id=category_id,
+        department_id=department_id,
+        doc_level=doc_level,
         status_filter=status,
         confidential_level=confidential_level,
         current_user=current_user,
@@ -316,6 +356,11 @@ async def update_document(
             raise HTTPException(status_code=403, detail="无权编辑此文档")
 
     ip_address = get_client_ip(request)
+    # 校验部门与文档级别（三级分类）若提交了相关字段
+    if doc_data.department_id is not None or doc_data.doc_level is not None:
+        final_level = await _validate_dept_and_level(session, doc_data.department_id, doc_data.doc_level)
+        if doc_data.doc_level is not None:
+            doc_data.doc_level = final_level
     document = await doc_service.update_document(session, doc_id, doc_data, current_user.id, ip_address)
     return DocumentOut.model_validate(document)
 

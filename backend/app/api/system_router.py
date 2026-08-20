@@ -11,11 +11,12 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_session
-from app.api.deps import require_admin, get_client_ip
+from app.api.deps import require_admin, get_current_user, get_client_ip
 from app.models.user import User
 from app.models.audit_log import AuditLog
 from app.models.system_config import SystemConfig
 from app.schemas.system_config import SystemConfigOut, SystemConfigUpdate
+from app.core.doc_levels import DOC_LEVELS
 
 router = APIRouter(prefix="/system", tags=["系统管理"])
 
@@ -35,6 +36,14 @@ DEFAULT_BUSINESS_SCOPES = [
     {"code": "procurement", "name": "采购"},
     {"code": "production", "name": "生产"},
 ]
+
+
+@router.get("/doc-levels", summary="获取文档级别列表（三级分类）")
+async def get_doc_levels(
+    current_user: User = Depends(get_current_user),
+):
+    """返回内置的 5 个文档级别（Ⅰ级文件/Ⅱ级文件/Ⅲ级文件/Ⅳ级文件/无级别），供前端选择（仅需登录）"""
+    return {"levels": DOC_LEVELS}
 
 
 @router.get("/brand", summary="获取系统品牌名称")

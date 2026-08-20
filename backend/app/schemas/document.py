@@ -16,7 +16,9 @@ class DocumentCreate(BaseModel):
     doc_no: Optional[str] = Field(None, max_length=50, description="文档编号，不传则自动生成")
     summary: Optional[str] = Field(None, description="文档摘要")
     keywords: Optional[str] = Field(None, description="关键词")
-    category_id: Optional[int] = Field(None, description="所属分类ID")
+    category_id: Optional[int] = Field(None, description="所属分类ID（一级分类）")
+    department_id: Optional[int] = Field(None, description="所属部门ID（二级分类）")
+    doc_level: Optional[str] = Field("无级别", description="文档级别（三级分类）")
     confidential_level: Optional[str] = Field(None, description="密级")
     effective_date: Optional[date] = Field(None, description="生效日期")
     expiry_date: Optional[date] = Field(None, description="失效日期")
@@ -28,7 +30,9 @@ class DocumentUpdate(BaseModel):
     doc_no: Optional[str] = Field(None, max_length=50, description="文档编号")
     summary: Optional[str] = Field(None, description="文档摘要")
     keywords: Optional[str] = Field(None, description="关键词")
-    category_id: Optional[int] = Field(None, description="所属分类ID")
+    category_id: Optional[int] = Field(None, description="所属分类ID（一级分类）")
+    department_id: Optional[int] = Field(None, description="所属部门ID（二级分类）")
+    doc_level: Optional[str] = Field(None, description="文档级别（三级分类）")
     status: Optional[str] = Field(None, description="文档状态")
     confidential_level: Optional[str] = Field(None, description="密级")
     effective_date: Optional[date] = Field(None, description="生效日期")
@@ -60,6 +64,14 @@ class CategoryBrief(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class DepartmentBrief(BaseModel):
+    """部门简要信息（二级分类）"""
+    id: int
+    name: str
+
+    model_config = {"from_attributes": True}
+
+
 class DocumentOut(BaseModel):
     """文档响应"""
     id: int
@@ -68,6 +80,8 @@ class DocumentOut(BaseModel):
     summary: Optional[str] = None
     keywords: Optional[str] = None
     category_id: Optional[int] = None
+    department_id: Optional[int] = None
+    doc_level: str = "无级别"
     file_name: Optional[str] = None
     file_size: Optional[int] = None
     file_type: Optional[str] = None
@@ -80,6 +94,7 @@ class DocumentOut(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
     category: Optional[CategoryBrief] = None
+    department: Optional[DepartmentBrief] = None
     uploader: Optional[UploaderBrief] = None
     can_download: bool = False
     has_pdf: bool = False
@@ -93,11 +108,13 @@ class DocumentListOut(BaseModel):
     doc_no: Optional[str] = None
     title: str
     confidential_level: Optional[str] = None
+    doc_level: str = "无级别"
     file_name: Optional[str] = None
     file_size: Optional[int] = None
     version: int
     status: str
     category: Optional[CategoryBrief] = None
+    department: Optional[DepartmentBrief] = None
     uploader: Optional[UploaderBrief] = None
     created_at: datetime
     can_download: bool = False

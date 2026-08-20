@@ -28,6 +28,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
 from app.core.timezone import beijing_now
+from app.core.doc_levels import DEFAULT_DOC_LEVEL
 
 
 class Document(Base):
@@ -52,7 +53,23 @@ class Document(Base):
     category_id: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey("categories.id", ondelete="SET NULL"),
-        comment="所属分类ID",
+        comment="所属分类ID（一级分类）",
+    )
+
+    # ── 二级分类：部门 ──────────────────────────────────────
+    department_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("departments.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="所属部门ID（二级分类）",
+    )
+
+    # ── 三级分类：文档级别 ──────────────────────────────────
+    doc_level: Mapped[str] = mapped_column(
+        String(20),
+        default=DEFAULT_DOC_LEVEL,
+        server_default=text("'无级别'"),
+        comment="文档级别（三级分类：Ⅰ级文件/Ⅱ级文件/Ⅲ级文件/Ⅳ级文件/无级别）",
     )
 
     # ── 文件信息 ────────────────────────────────────────────
@@ -123,6 +140,11 @@ class Document(Base):
         back_populates="documents",
         lazy="selectin",
     )
+    department: Mapped["Department | None"] = relationship(  # noqa: F821
+        "Department",
+        foreign_keys=[department_id],
+        lazy="selectin",
+    )
     permissions: Mapped[list["DocumentPermission"]] = relationship(
         "DocumentPermission",
         back_populates="document",
@@ -135,6 +157,8 @@ class Document(Base):
 
     __table_args__ = (
         Index("ix_documents_category_id", "category_id"),
+        Index("ix_documents_department_id", "department_id"),
+        Index("ix_documents_doc_level", "doc_level"),
         Index("ix_documents_status", "status"),
         Index("ix_documents_uploaded_by", "uploaded_by"),
         Index("ix_documents_created_at", "created_at"),

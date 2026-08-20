@@ -1,7 +1,55 @@
 <template>
   <div class="category-manage">
+    <!-- 三级分类结构概览 -->
+    <el-card shadow="never" class="structure-card">
+      <div class="card-header">
+        <span class="structure-title">三级分类结构</span>
+        <div class="structure-hint">一级：文档分类　·　二级：部门分类　·　三级：文档级别</div>
+      </div>
+      <div class="structure-levels" v-loading="structureLoading">
+        <!-- 一级分类 -->
+        <div class="level-row">
+          <div class="level-badge level-1">一级</div>
+          <div class="level-body">
+            <div class="level-name">文档分类</div>
+            <div class="level-desc">在下方表格中维护，用于文档上传与权限控制</div>
+          </div>
+          <el-button type="primary" link :disabled="categoryList.length === 0" @click="scrollToTable">共 {{ pagination.total || categoryList.length }} 项</el-button>
+        </div>
+
+        <!-- 二级部门 -->
+        <div class="level-row">
+          <div class="level-badge level-2">二级</div>
+          <div class="level-body">
+            <div class="level-name">部门分类</div>
+            <div class="level-desc">引用「部门管理」中的部门，文档可归属到具体部门</div>
+            <div class="level-tags" v-if="departmentOptions.length">
+              <el-tag v-for="d in departmentOptions" :key="d.id" size="small" effect="plain">{{ d.name }}</el-tag>
+            </div>
+            <el-tag v-else size="small" type="info" effect="plain">暂无部门</el-tag>
+          </div>
+          <el-button type="primary" link @click="$router.push('/departments')">
+            共 {{ departmentOptions.length }} 项 管理
+          </el-button>
+        </div>
+
+        <!-- 三级文档级别 -->
+        <div class="level-row">
+          <div class="level-badge level-3">三级</div>
+          <div class="level-body">
+            <div class="level-name">文档级别</div>
+            <div class="level-desc">系统预设的文档保密级别，用于文档分级标识</div>
+            <div class="level-tags">
+              <el-tag v-for="lv in docLevels" :key="lv" size="small" type="primary" effect="plain">{{ lv }}</el-tag>
+            </div>
+          </div>
+          <span class="level-fixed">固定预设</span>
+        </div>
+      </div>
+    </el-card>
+
     <!-- 操作栏 -->
-    <el-card shadow="never" class="search-card">
+    <el-card shadow="never" class="search-card" id="category-table-card">
       <div class="card-header">
         <span>分类管理</span>
         <el-button type="primary" :icon="Plus" @click="handleAdd">新增分类</el-button>
@@ -128,10 +176,17 @@ import { ref, reactive, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { getCategoryList, createCategory, updateCategory, deleteCategory } from '../api/category.js'
+import { getDepartmentSimple } from '../api/department.js'
+import { getDocLevels } from '../api/document.js'
 
 // 加载状态
 const loading = ref(false)
 const submitting = ref(false)
+const structureLoading = ref(false)
+
+// 三级分类结构数据
+const departmentOptions = ref([])
+const docLevels = ref(['无级别'])
 
 // 分类列表
 const categoryList = ref([])
@@ -274,8 +329,32 @@ function handlePageChange(page) {
   fetchList()
 }
 
+function scrollToTable() {
+  document.getElementById('category-table-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+/**
+ * 加载三级分类结构数据（部门、文档级别）
+ */
+async function fetchStructure() {
+  structureLoading.value = true
+  try {
+    const deptRes = await getDepartmentSimple()
+    const list = deptRes.items || deptRes.data || deptRes || []
+    departmentOptions.value = Array.isArray(list) ? list : []
+  } catch { /* ignore */ }
+  try {
+    const levelRes = await getDocLevels()
+    if (levelRes && Array.isArray(levelRes.levels) && levelRes.levels.length > 0) {
+      docLevels.value = levelRes.levels
+    }
+  } catch { /* ignore */ }
+  structureLoading.value = false
+}
+
 onMounted(() => {
   fetchList()
+  fetchStructure()
 })
 </script>
 
@@ -284,6 +363,86 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.structure-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1d2129;
+}
+
+.structure-hint {
+  font-size: 12px;
+  color: #86909c;
+}
+
+.structure-levels {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 60px;
+}
+
+.level-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  background: #fafbfc;
+}
+
+.level-badge {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.level-badge.level-1 { background: linear-gradient(135deg, #165dff, #2b6df6); }
+.level-badge.level-2 { background: linear-gradient(135deg, #13c2c2, #0aa5a5); }
+.level-badge.level-3 { background: linear-gradient(135deg, #722ed1, #531dab); }
+
+.level-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.level-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1d2129;
+}
+
+.level-desc {
+  font-size: 12px;
+  color: #86909c;
+  line-height: 1.6;
+}
+
+.level-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.level-fixed {
+  flex-shrink: 0;
+  align-self: center;
+  font-size: 12px;
+  color: #86909c;
+  background: #f0f0f0;
+  padding: 4px 10px;
+  border-radius: 12px;
 }
 
 .card-header {

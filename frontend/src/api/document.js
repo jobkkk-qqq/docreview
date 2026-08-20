@@ -5,8 +5,16 @@
 import request from './request.js'
 
 /**
+ * 获取文档级别列表（三级分类：Ⅰ级文件/Ⅱ级文件/Ⅲ级文件/Ⅳ级文件/无级别）
+ * @returns {Promise}
+ */
+export function getDocLevels() {
+  return request.get('/system/doc-levels')
+}
+
+/**
  * 获取文档列表（扁平分页）
- * @param {Object} params - 查询参数（分页、关键词、分类、保密等级等）
+ * @param {Object} params - 查询参数（分页、关键词、分类、部门、文档级别、保密等级等）
  * @returns {Promise}
  */
 export function getDocumentList(params) {

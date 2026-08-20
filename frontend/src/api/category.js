@@ -22,15 +22,6 @@ export function getCategoryListSimple() {
 }
 
 /**
- * 获取分类详情
- * @param {number} id - 分类 ID
- * @returns {Promise}
- */
-export function getCategoryDetail(id) {
-  return request.get(`/categories/${id}`)
-}
-
-/**
  * 创建分类
  * @param {Object} data - { name, description, parent_id }
  * @returns {Promise}

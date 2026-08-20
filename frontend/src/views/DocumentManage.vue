@@ -12,9 +12,19 @@
             @keyup.enter="handleSearch"
           />
         </el-form-item>
-        <el-form-item label="分类">
+        <el-form-item label="一级分类">
           <el-select v-model="searchForm.category_id" placeholder="全部分类" clearable style="width: 160px">
             <el-option v-for="item in categoryOptions" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="部门">
+          <el-select v-model="searchForm.department_id" placeholder="全部部门" clearable style="width: 140px">
+            <el-option v-for="item in departmentOptions" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="文档级别">
+          <el-select v-model="searchForm.doc_level" placeholder="全部级别" clearable style="width: 130px">
+            <el-option v-for="lv in docLevels" :key="lv" :label="lv" :value="lv" />
           </el-select>
         </el-form-item>
         <el-form-item label="保密等级">
@@ -113,6 +123,12 @@
                   {{ doc.doc_no }}
                 </div>
 
+                <!-- 部门 / 文档级别 -->
+                <div class="card-dep-level">
+                  <el-tag v-if="doc.department" size="small" type="info" effect="plain">{{ doc.department.name }}</el-tag>
+                  <el-tag v-if="doc.doc_level && doc.doc_level !== '无级别'" size="small" type="primary" effect="plain">{{ doc.doc_level }}</el-tag>
+                </div>
+
                 <!-- 底部信息栏 -->
                 <div class="card-footer">
                   <div class="card-meta">
@@ -154,7 +170,7 @@
           <el-collapse-transition>
             <div v-show="group._expanded !== false" v-if="viewMode === 'list'" class="doc-list">
               <el-table :data="group.documents" stripe size="small" style="width: 100%">
-                <el-table-column label="文件名" min-width="220">
+                <el-table-column label="文件名" min-width="240">
                   <template #default="{ row }">
                     <div class="list-file-name" @click="handleView(row)">
                       <el-tag
@@ -169,20 +185,33 @@
                     </div>
                   </template>
                 </el-table-column>
-                <el-table-column label="文档编号" prop="doc_no" min-width="140" show-overflow-tooltip />
-                <el-table-column label="保密等级" width="90" align="center">
+                <el-table-column label="文档编号" prop="doc_no" width="146" align="right" show-overflow-tooltip />
+                <el-table-column label="保密等级" width="116" align="right">
                   <template #default="{ row }">
                     <el-tag :type="confidentialityTagType(row.confidential_level)" size="small">
                       {{ confidentialityLabel(row.confidential_level) }}
                     </el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column label="上传人" min-width="120">
+                <el-table-column label="部门" width="108" align="right">
+                  <template #default="{ row }">
+                    {{ row.department?.name || '-' }}
+                  </template>
+                </el-table-column>
+                <el-table-column label="文档级别" width="92" align="left">
+                  <template #default="{ row }">
+                    <el-tag v-if="row.doc_level && row.doc_level !== '无级别'" size="small" type="primary" effect="plain">
+                      {{ row.doc_level }}
+                    </el-tag>
+                    <span v-else>-</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="上传人" width="96" header-align="center">
                   <template #default="{ row }">
                     {{ row.uploader?.display_name || row.uploader?.username || '-' }}
                   </template>
                 </el-table-column>
-                <el-table-column label="上传时间" width="150">
+                <el-table-column label="上传时间" width="126" header-align="center">
                   <template #default="{ row }">
                     {{ formatDate(row.created_at) }}
                   </template>
@@ -246,6 +275,13 @@
         <el-descriptions-item label="文档编号" :span="2">{{ currentDoc.doc_no }}</el-descriptions-item>
         <el-descriptions-item label="文档标题" :span="2">{{ currentDoc.title }}</el-descriptions-item>
         <el-descriptions-item label="分类">{{ currentDoc.category?.name || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="部门">{{ currentDoc.department?.name || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="文档级别">
+          <el-tag v-if="currentDoc.doc_level && currentDoc.doc_level !== '无级别'" size="small" type="primary" effect="plain">
+            {{ currentDoc.doc_level }}
+          </el-tag>
+          <span v-else>-</span>
+        </el-descriptions-item>
         <el-descriptions-item label="保密等级">
           <el-tag :type="confidentialityTagType(currentDoc.confidential_level)" size="small">
             {{ confidentialityLabel(currentDoc.confidential_level) }}
@@ -278,6 +314,16 @@
         <el-form-item label="分类" prop="category_id">
           <el-select v-model="editForm.category_id" placeholder="请选择分类" style="width: 100%">
             <el-option v-for="item in categoryOptions" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="部门">
+          <el-select v-model="editForm.department_id" placeholder="请选择部门" clearable style="width: 100%">
+            <el-option v-for="item in departmentOptions" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="文档级别">
+          <el-select v-model="editForm.doc_level" placeholder="请选择文档级别" style="width: 100%">
+            <el-option v-for="lv in docLevels" :key="lv" :label="lv" :value="lv" />
           </el-select>
         </el-form-item>
         <el-form-item label="保密等级" prop="confidential_level">
@@ -517,9 +563,10 @@ import {
 import {
   getDocumentGrouped, getDocumentDetail, downloadDocument, deleteDocument,
   updateDocument, reportPreviewLog, getDocPermissions, grantDocPermission,
-  revokeDocPermission
+  revokeDocPermission, getDocLevels
 } from '../api/document.js'
 import { getCategoryListSimple } from '../api/category.js'
+import { getDepartmentSimple } from '../api/department.js'
 import { getUserList } from '../api/user.js'
 import { getRoleList } from '../api/role.js'
 import { canUploadDoc, canModifyDoc, canDeleteDoc, canManageDocPermissions } from '../utils/permission.js'
@@ -545,7 +592,9 @@ const { isMobile } = useMobile()
 
 // 搜索
 const categoryOptions = ref([])
-const searchForm = reactive({ keyword: '', category_id: '', confidential_level: '' })
+const departmentOptions = ref([])
+const docLevels = ref(['无级别'])
+const searchForm = reactive({ keyword: '', category_id: '', department_id: '', doc_level: '', confidential_level: '' })
 
 // 详情
 const detailVisible = ref(false)
@@ -556,7 +605,7 @@ const editVisible = ref(false)
 const editSubmitting = ref(false)
 const editFormRef = ref(null)
 const editDoc = ref(null)
-const editForm = reactive({ title: '', doc_no: '', summary: '', category_id: '', confidential_level: '' })
+const editForm = reactive({ title: '', doc_no: '', summary: '', category_id: '', department_id: '', doc_level: '无级别', confidential_level: '' })
 const editRules = { title: [{ required: true, message: '请输入文档标题', trigger: 'blur' }] }
 
 // 预览
@@ -620,6 +669,8 @@ async function fetchGroupedDocuments() {
     const params = {
       keyword: searchForm.keyword || undefined,
       category_id: searchForm.category_id || undefined,
+      department_id: searchForm.department_id || undefined,
+      doc_level: searchForm.doc_level || undefined,
       confidential_level: searchForm.confidential_level || undefined,
       page: 1,
       page_size: 30,
@@ -639,11 +690,31 @@ async function fetchCategories() {
     categoryOptions.value = res.items || res.data || res || []
   } catch { /* ignore */ }
 }
+async function fetchDepartments() {
+  try {
+    const deptRes = await getDepartmentSimple()
+    const list = deptRes.items || deptRes.data || deptRes || []
+    departmentOptions.value = Array.isArray(list) ? list : []
+  } catch { /* ignore */ }
+}
+async function fetchDocLevels() {
+  try {
+    const levelRes = await getDocLevels()
+    if (levelRes && Array.isArray(levelRes.levels) && levelRes.levels.length > 0) {
+      docLevels.value = levelRes.levels
+    }
+  } catch { /* ignore */ }
+}
+async function fetchOptions() {
+  await fetchCategories()
+  await fetchDepartments()
+  await fetchDocLevels()
+}
 
 // 搜索/重置
 function handleSearch() { fetchGroupedDocuments() }
 function handleReset() {
-  searchForm.keyword = ''; searchForm.category_id = ''; searchForm.confidential_level = ''
+  searchForm.keyword = ''; searchForm.category_id = ''; searchForm.department_id = ''; searchForm.doc_level = ''; searchForm.confidential_level = ''
   fetchGroupedDocuments()
 }
 
@@ -656,6 +727,8 @@ async function handleGroupPageChange(groupId, page) {
     const params = {
       keyword: searchForm.keyword || undefined,
       category_id: searchForm.category_id || undefined,
+      department_id: searchForm.department_id || undefined,
+      doc_level: searchForm.doc_level || undefined,
       confidential_level: searchForm.confidential_level || undefined,
       page,
       page_size: 30,
@@ -797,7 +870,8 @@ async function handleEdit(row) {
     const res = await getDocumentDetail(row.id)
     editDoc.value = res
     editForm.title = res.title || ''; editForm.doc_no = res.doc_no || ''; editForm.summary = res.summary || ''
-    editForm.category_id = res.category_id || ''; editForm.confidential_level = res.confidential_level || ''
+    editForm.category_id = res.category_id || ''; editForm.department_id = res.department_id || ''
+    editForm.doc_level = res.doc_level || '无级别'; editForm.confidential_level = res.confidential_level || ''
     editVisible.value = true
   } catch { /* ignore */ }
 }
@@ -810,6 +884,8 @@ async function handleEditSubmit() {
       await updateDocument(editDoc.value.id, {
         title: editForm.title, summary: editForm.summary || undefined,
         category_id: editForm.category_id || undefined,
+        department_id: editForm.department_id || undefined,
+        doc_level: editForm.doc_level || undefined,
         confidential_level: editForm.confidential_level || undefined,
         doc_no: editForm.doc_no || undefined,
       })
@@ -931,7 +1007,7 @@ async function handleBatchPermSubmit() {
   } catch { /* ignore */ } finally { batchPermSaving.value = false }
 }
 
-onMounted(() => { fetchGroupedDocuments(); fetchCategories() })
+onMounted(() => { fetchGroupedDocuments(); fetchOptions() })
 </script>
 
 <style scoped>
@@ -1171,6 +1247,15 @@ onMounted(() => { fetchGroupedDocuments(); fetchCategories() })
 }
 .card-doc-no .el-icon {
   font-size: 13px;
+}
+
+/* 卡片部门/级别标签 */
+.card-dep-level {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  min-height: 22px;
 }
 
 /* ── 底部信息 ── */

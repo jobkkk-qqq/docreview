@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_session
-from app.api.deps import require_permission, get_client_ip
+from app.api.deps import require_permission, get_current_user, get_client_ip
 from app.models.user import User
 from app.models.department import Department
 from app.models.audit_log import AuditLog
@@ -32,6 +32,22 @@ async def _attach_user_counts(session: AsyncSession, departments: list[Departmen
     )
     rows = (await session.execute(stmt)).all()
     return {row[0]: row[1] for row in rows}
+
+
+@router.get("/simple", summary="部门简要列表（二级分类选择用）")
+async def simple_departments(
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user),
+):
+    """返回启用中的部门 {id, name} 列表，供文档上传/筛选时选择二级分类（仅需登录）"""
+    stmt = (
+        select(Department.id, Department.name)
+        .where(Department.is_active == True)
+        .order_by(Department.id)
+    )
+    result = await session.execute(stmt)
+    rows = result.all()
+    return [{"id": row[0], "name": row[1]} for row in rows]
 
 
 @router.get("/tree", summary="部门树")

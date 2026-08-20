@@ -14,6 +14,7 @@ export default defineConfig(({ command }) => ({
     target: 'es2015',
     minify: false,
     sourcemap: false,
+    emptyOutDir: true,
   },
   server: command === 'serve' ? {
     host: '0.0.0.0',

@@ -12,6 +12,14 @@ build/
 dist/
 frontend/dist/
 DocReview-Windows/
+DocReview-Windows-old/
+
+# ── 一次性开发/迁移脚本 ──────────────────────────────
+_*.py
+backend/_*.py
+backend/_prod_db_backup/
+backend/docreview_clean.db
+frontend/src/api/__apicheck.py
 
 # ── 用户数据与敏感内容 ─────────────────────────────────
 # 文档实际存储目录（不含真实文档）

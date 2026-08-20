@@ -53,12 +53,13 @@ import { ElMessage } from 'element-plus'
 import { User, Lock } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth.js'
 import { getSystemBrand } from '../api/system.js'
+import { setBrandName } from '../utils/brand.js'
 
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 
-// 品牌名称（登录页默认显示，稍后从后端公开接口加载）
+// 品牌名称（登录页默认显示占位，稍后从后端公开接口加载）
 const brandName = ref('XXX数字档案管理系统')
 
 onMounted(() => {
@@ -78,6 +79,7 @@ async function loadBrandName() {
     const res = await getSystemBrand()
     if (res && res.brand_name) {
       brandName.value = res.brand_name
+      setBrandName(res.brand_name)
     }
   } catch {
     // 加载失败时使用默认名称

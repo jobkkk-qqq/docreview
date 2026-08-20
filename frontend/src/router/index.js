@@ -4,6 +4,7 @@
  * 以及路由守卫（未登录跳转登录页，已登录禁止访问登录页）
  */
 import { createRouter, createWebHistory } from 'vue-router'
+import { getBrandName } from '../utils/brand.js'
 
 // 路由表
 const routes = [
@@ -126,9 +127,9 @@ router.beforeEach((to, from, next) => {
     }
   }
 
-  // 设置页面标题
+  // 设置页面标题（品牌名从系统配置缓存读取）
   if (to.meta.title) {
-    document.title = `${to.meta.title} - XXX数字档案管理系统`
+    document.title = `${to.meta.title} - ${getBrandName()}`
   }
 })
 

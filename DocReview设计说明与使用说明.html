@@ -586,7 +586,7 @@
                         <tr><td><code>role_permissions</code></td><td>角色-权限关联</td><td>role_id、permission_id（多对多）</td></tr>
                         <tr><td><code>departments</code></td><td>部门</td><td>name、description</td></tr>
                         <tr><td><code>categories</code></td><td>文档分类</td><td>name、code、is_public、business_type、sort_order</td></tr>
-                        <tr><td><code>documents</code></td><td>文档</td><td>doc_no、title、file_path、pdf_path、content_hash、status、confidential_level</td></tr>
+                        <tr><td><code>documents</code></td><td>文档</td><td>doc_no、title、category_id（一级分类）、department_id（二级部门）、doc_level（三级文档级别）、file_path、pdf_path、content_hash、status、confidential_level、is_deleted</td></tr>
                         <tr><td><code>document_permissions</code></td><td>文档权限</td><td>document_id、user_id、role_id、can_view/can_download/can_edit/can_print</td></tr>
                         <tr><td><code>category_permissions</code></td><td>分类权限</td><td>category_id、user_id、role_id、can_view/can_edit</td></tr>
                         <tr><td><code>audit_logs</code></td><td>审计日志</td><td>user_id、action、target_type、target_id、detail、ip_address</td></tr>
@@ -606,7 +606,7 @@
             </div>
             <div class="callout callout-info">
                 <span class="callout-icon">🔄</span>
-                <div><strong>数据库自动迁移</strong>：<code>system_configs</code> 表记录 <code>schema_version</code>，启动时若版本落后则依次执行迁移（当前 v4），已包含字段回填等数据修复逻辑。</div>
+                <div><strong>数据库自动迁移</strong>：<code>system_configs</code> 表记录 <code>schema_version</code>，启动时若版本落后则依次执行迁移（当前 v5）。v5 迁移为既有文档新增 <code>doc_level</code> 字段（三级分类/文档级别，默认"无级别"），并为二级部门分类新增 <code>department_id</code> 字段（存量数据初始为空，归属部门由使用方后续维护）。</div>
             </div>
             <div class="callout callout-warning">
                 <span class="callout-icon">👁️</span>
@@ -665,29 +665,45 @@
                 <div><strong>权限矩阵页</strong>是核心配置入口：Tab1 菜单功能权限按角色勾选，带乐观锁（permission_version）防并发冲突；Tab2 文档权限按分类分组，逐文档勾选预览/下载/编辑/删除，支持整行全选。</div>
             </div>
 
-            <h3 id="categories">3.4 分类管理</h3>
+            <h3 id="categories">3.4 分类管理（三级分类结构）</h3>
+            <p>系统将文档划分为<strong>三级分类</strong>，用于更精细地组织与定位文档：</p>
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>级别</th><th>名称</th><th>数据来源</th><th>说明</th></tr></thead>
+                    <tbody>
+                        <tr><td><span class="badge badge-blue">一级</span></td><td>文档分类</td><td>分类管理页维护</td><td>现有的文档分类，可绑定业务类型、全员可见、排序，用于上传、权限控制</td></tr>
+                        <tr><td><span class="badge badge-green">二级</span></td><td>部门分类</td><td>引用部门管理中的部门</td><td>文档可归属到具体部门；部门在"部门管理"中维护，分类管理页只读展示</td></tr>
+                        <tr><td><span class="badge badge-purple">三级</span></td><td>文档级别</td><td>系统预设固定值</td><td>固定为 Ⅰ级文件、Ⅱ级文件、Ⅲ级文件、Ⅳ级文件、无级别，用于文档分级标识</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <h4>一级分类功能</h4>
             <ul>
                 <li>分类增删改查，支持排序与启用/停用</li>
                 <li>每个分类可绑定<strong>业务类型</strong>（quality/admin/hr/finance/legal/procurement/production）</li>
                 <li>开启"全员可见"后所有登录用户默认可查看该分类文档</li>
                 <li>业务用户的分类下拉自动推荐匹配其业务类型的分类</li>
             </ul>
+            <div class="callout callout-info">
+                <span class="callout-icon">🗂️</span>
+                <span>分类管理页顶部以"三级分类结构"卡片呈现整体层级概览：一级文档分类（下方表格维护）、二级部门分类（展示部门名称并可跳转至部门管理）、三级文档级别（固定预设）。部门和文档级别不参与权限校验，沿用原一级分类的权限体系。</span>
+            </div>
 
             <h3 id="documents">3.5 文档管理（核心模块）</h3>
             <div class="table-wrap">
                 <table>
                     <thead><tr><th>功能</th><th>说明</th></tr></thead>
                     <tbody>
-                        <tr><td><span class="badge badge-blue">单文件上传</span></td><td>填写标题（必填）、编号（自动生成年月+流水号）、分类、密级、描述；可选授权角色</td></tr>
-                        <tr><td><span class="badge badge-green">批量上传</span></td><td>统一分类/密级/描述/授权角色，多文件提交，标题自动取文件名；结果对话框展示成功/失败明细</td></tr>
-                        <tr><td><span class="badge badge-amber">上传校验</span></td><td>白名单格式（pdf/doc/docx/xls/xlsx/ppt/pptx/txt/jpg/png/zip/rar）、单文件 ≤50MB（可配置）</td></tr>
+                        <tr><td><span class="badge badge-blue">单文件上传</span></td><td>填写标题（必填）、编号（自动生成年月+流水号）、一级分类、部门（二级，选填）、文档级别（三级，默认无级别）、密级、描述；可选授权角色</td></tr>
+                        <tr><td><span class="badge badge-green">批量上传</span></td><td>统一的一级分类/部门/文档级别/密级/描述/授权角色，多文件提交，标题自动取文件名；结果对话框展示成功/失败明细</td></tr>
+                        <tr><td><span class="badge badge-amber">上传校验</span></td><td>白名单格式（pdf/doc/docx/xls/xlsx/ppt/pptx/txt/jpg/png/zip/rar）、单文件 ≤50MB（可配置）；文档级别须为预设五级之一，部门须存在且启用</td></tr>
                         <tr><td><span class="badge badge-purple">重复检测</span></td><td>上传时计算 SHA-256，与库中未删除文档比对，重复则 409 提示并显示已存在文档，可跳转查看</td></tr>
-                        <tr><td>列表浏览</td><td>按分类分组展示（可折叠）；卡片/列表双视图；关键词+分类+密级组合搜索；<strong>组内分页</strong>（每分类独立翻页，每页30条，翻页只刷新当前组不影响其他组）</td></tr>
-                        <tr><td>详情查看</td><td>编号、标题、分类、密级、上传人、时间、大小、格式、描述</td></tr>
+                        <tr><td>列表浏览</td><td>按一级分类分组展示（可折叠）；卡片/列表双视图；关键词+一级分类+部门+文档级别+密级组合搜索；<strong>组内分页</strong>（每分类独立翻页，每页30条，翻页只刷新当前组不影响其他组）</td></tr>
+                        <tr><td>详情查看</td><td>编号、标题、一级分类、部门、文档级别、密级、上传人、时间、大小、格式、描述</td></tr>
                         <tr><td>在线预览</td><td>Office 后台转 PDF 后内嵌预览；PDF 直接预览；txt/md 文本预览；图片预览；移动端走浏览器原生阅读器</td></tr>
                         <tr><td>水印保护</td><td>非公开文档预览时叠加"用户名+日期"斜角水印</td></tr>
                         <tr><td>下载</td><td>权限校验后返回文件流；预览/下载行为均记录日志</td></tr>
-                        <tr><td>编辑</td><td>修改编号、标题、描述、分类、密级（需 modify_doc 权限）</td></tr>
+                        <tr><td>编辑</td><td>修改编号、标题、描述、一级分类、部门、文档级别、密级（需 modify_doc 权限）</td></tr>
                         <tr><td>审核</td><td>待审核文档可审核为通过/驳回（approved/rejected），留审核意见</td></tr>
                         <tr><td>删除</td><td>软删除，文件移入回收站（需 delete_doc 权限）</td></tr>
                         <tr><td>恢复</td><td>系统配置页"文档恢复"区，仅超级管理员可恢复已删除文档</td></tr>
@@ -788,8 +804,8 @@
 
             <h3 id="user-guide">4.3 普通用户日常操作</h3>
             <ol class="step-list">
-                <li><strong>上传文档</strong>：进入"文档上传"，选择单文件或批量模式，填写分类与密级后提交；若文件重复会收到提示</li>
-                <li><strong>查找文档</strong>：进入"文档管理"，使用关键词/分类/密级搜索；或按分类展开浏览</li>
+                <li><strong>上传文档</strong>：进入"文档上传"，选择单文件或批量模式，填写一级分类、部门、文档级别与密级后提交；若文件重复会收到提示</li>
+                <li><strong>查找文档</strong>：进入"文档管理"，使用关键词/一级分类/部门/文档级别/密级组合搜索；或按分类展开浏览</li>
                 <li><strong>预览文档</strong>：点击文档行"预览"，Office 文件自动转 PDF 展示，预览页带个人水印</li>
                 <li><strong>下载文档</strong>：点击"下载"，浏览器保存文件</li>
                 <li><strong>查看操作记录</strong>：被授权后可查看操作日志，掌握文档动态</li>
@@ -866,6 +882,11 @@
                             <td><span class="badge badge-green">V1.1</span></td>
                             <td>2026-08-15</td>
                             <td>文档列表分组内分页：每分类独立翻页（每页30条），翻页只刷新当前组不影响其他组；修复孤儿PDF文件；清理旧版数据</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge badge-purple">V1.2</span></td>
+                            <td>2026-08-19</td>
+                            <td>新增三级分类结构：一级文档分类、二级部门分类（引用部门管理）、三级文档级别（Ⅰ~Ⅳ级与无级别）；文档上传/编辑/列表/详情/筛选全面支持三级分类；数据库 schema 升至 v5（存量文档 doc_level 默认"无级别"，部门留空）</td>
                         </tr>
                     </tbody>
                 </table>

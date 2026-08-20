@@ -52,19 +52,21 @@ import { useAuthStore } from '../stores/auth.js'
 import { useAppStore } from '../stores/app.js'
 import { hasMenuPermission } from '../utils/permission.js'
 import { getSystemBrand } from '../api/system.js'
+import { setBrandName, getBrandName } from '../utils/brand.js'
 
 const route = useRoute()
 const authStore = useAuthStore()
 const appStore = useAppStore()
 
-// 品牌名称（从后端公开接口加载）
-const brandName = ref('XXX数字档案管理系统')
+// 品牌名称（优先取缓存，再从后端公开接口加载刷新）
+const brandName = ref(getBrandName())
 
 onMounted(async () => {
   try {
     const res = await getSystemBrand()
     if (res && res.brand_name) {
       brandName.value = res.brand_name
+      setBrandName(res.brand_name)
     }
   } catch {
     // 加载失败时使用默认名称

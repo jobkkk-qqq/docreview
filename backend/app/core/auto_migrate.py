@@ -8,6 +8,7 @@
   v2 — 软删除（documents 表添加 is_deleted、deleted_at 字段）
   v3 — 文件重复检测（documents 表添加 content_hash 字段）
   v4 — 回填已有文档的 content_hash（文件内容 SHA-256）
+  v5 — 分类三级化（documents 表添加 department_id、doc_level 字段）
 """
 import hashlib
 import logging
@@ -21,7 +22,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # 当前数据库 schema 版本，新增迁移时递增此值
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 # system_configs 中存储版本号的 key
 VERSION_KEY = "schema_version"
@@ -131,6 +132,38 @@ async def _migrate_v3(conn) -> None:
             logger.info("[AutoMigrate] documents.content_hash 字段已添加")
 
 
+async def _migrate_v5(conn) -> None:
+    """v5 迁移：分类三级化 — documents 表添加 department_id、doc_level 字段
+
+    存量文档：部门分类保留空白（department_id 为空），文档级别默认置为"无级别"。
+    """
+    tables = await conn.run_sync(lambda sync_conn: inspect(sync_conn).get_table_names())
+    if "documents" not in tables:
+        return
+
+    doc_cols = {col["name"] for col in await conn.run_sync(
+        lambda sync_conn: inspect(sync_conn).get_columns("documents")
+    )}
+
+    # 1. department_id（二级分类：部门，默认为空）
+    if "department_id" not in doc_cols:
+        await conn.execute(text("ALTER TABLE documents ADD COLUMN department_id INTEGER DEFAULT NULL"))
+        logger.info("[AutoMigrate] documents.department_id 字段已添加")
+
+    # 2. doc_level（三级分类：文档级别，非空，默认"无级别"）
+    if "doc_level" not in doc_cols:
+        await conn.execute(text("ALTER TABLE documents ADD COLUMN doc_level VARCHAR(20) DEFAULT '无级别' NOT NULL"))
+        logger.info("[AutoMigrate] documents.doc_level 字段已添加")
+
+    # 3. 回填存量文档的文档级别为"无级别"
+    await conn.execute(text("UPDATE documents SET doc_level = '无级别' WHERE doc_level IS NULL OR doc_level = ''"))
+
+    # 4. 创建索引（幂等）
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_documents_department_id ON documents (department_id)"))
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_documents_doc_level ON documents (doc_level)"))
+    logger.info("[AutoMigrate][v5] 分类三级化迁移完成")
+
+
 async def _migrate_v4(engine: AsyncEngine) -> None:
     """v4 迁移：回填已有文档的 content_hash（文件内容 SHA-256）
 
@@ -189,6 +222,7 @@ async def auto_migrate(engine: AsyncEngine) -> None:
     先查询 schema_version，仅当版本号 < CURRENT_SCHEMA_VERSION 时执行迁移。
     正常情况下每次启动只执行一次轻量 SELECT 查询，性能开销可忽略。
     """
+    need_v4_backfill = False
     async with engine.begin() as conn:
         db_version = await _get_current_db_version(conn)
         if db_version >= CURRENT_SCHEMA_VERSION:
@@ -197,20 +231,22 @@ async def auto_migrate(engine: AsyncEngine) -> None:
 
         logger.info(f"[AutoMigrate] 数据库版本 v{db_version}，需要迁移到 v{CURRENT_SCHEMA_VERSION}")
 
-        # 按需执行迁移
+        # v1、v2、v3、v5 均为纯 DDL/轻量更新，在事务内执行
         if db_version < 1:
             await _migrate_v1(conn)
         if db_version < 2:
             await _migrate_v2(conn)
         if db_version < 3:
             await _migrate_v3(conn)
+        if db_version < 5:
+            await _migrate_v5(conn)
 
-        # v4 需要读取物理文件，在 engine.begin() 外面用独立 session 执行
-        # 但先更新版本号，然后退出 conn 事务，再用独立 session 跑 v4
-        if db_version < 4:
-            await _set_db_version(conn, CURRENT_SCHEMA_VERSION)
-            logger.info(f"[AutoMigrate] 数据库版本已更新为 v{CURRENT_SCHEMA_VERSION}（v4 文件回填在事务外单独执行）")
+        # 先提交版本号并退出 conn 事务
+        await _set_db_version(conn, CURRENT_SCHEMA_VERSION)
+        logger.info(f"[AutoMigrate] 数据库版本已更新为 v{CURRENT_SCHEMA_VERSION}")
 
-    # v4 文件回填在 engine.begin() 事务外执行，避免长时间占用连接
-    if db_version < 4:
+        # v4 需要读取物理文件，在 engine.begin() 事务外单独执行，避免长时间占用连接
+        need_v4_backfill = db_version < 4
+
+    if need_v4_backfill:
         await _migrate_v4(engine)

@@ -16,7 +16,7 @@
             </template>
           </el-input>
         </el-form-item>
-        <el-form-item label="分类">
+        <el-form-item label="一级分类">
           <el-select
             v-model="searchForm.category_id"
             placeholder="全部分类"
@@ -29,6 +29,31 @@
               :label="item.name"
               :value="item.id"
             />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="部门">
+          <el-select
+            v-model="searchForm.department_id"
+            placeholder="全部部门"
+            clearable
+            style="width: 140px"
+          >
+            <el-option
+              v-for="item in departmentOptions"
+              :key="item.id"
+              :label="item.name"
+              :value="item.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="文档级别">
+          <el-select
+            v-model="searchForm.doc_level"
+            placeholder="全部级别"
+            clearable
+            style="width: 130px"
+          >
+            <el-option v-for="lv in docLevels" :key="lv" :label="lv" :value="lv" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -53,6 +78,19 @@
         <el-table-column label="分类" width="120">
           <template #default="{ row }">
             {{ row.category?.name || '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="部门" width="120">
+          <template #default="{ row }">
+            {{ row.department?.name || '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="文档级别" width="100" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.doc_level && row.doc_level !== '无级别'" size="small" type="primary" effect="plain">
+              {{ row.doc_level }}
+            </el-tag>
+            <span v-else>-</span>
           </template>
         </el-table-column>
         <el-table-column label="保密等级" width="100">
@@ -128,6 +166,15 @@
         </el-descriptions-item>
         <el-descriptions-item label="分类">
           {{ currentDoc.category?.name || '-' }}
+        </el-descriptions-item>
+        <el-descriptions-item label="部门">
+          {{ currentDoc.department?.name || '-' }}
+        </el-descriptions-item>
+        <el-descriptions-item label="文档级别">
+          <el-tag v-if="currentDoc.doc_level && currentDoc.doc_level !== '无级别'" size="small" type="primary" effect="plain">
+            {{ currentDoc.doc_level }}
+          </el-tag>
+          <span v-else>-</span>
         </el-descriptions-item>
         <el-descriptions-item label="保密等级">
           <el-tag
@@ -209,8 +256,9 @@ import { ref, reactive, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
-import { getDocumentList, getDocumentDetail, downloadDocument, reportPreviewLog } from '../api/document.js'
+import { getDocumentList, getDocumentDetail, downloadDocument, reportPreviewLog, getDocLevels } from '../api/document.js'
 import { getCategoryListSimple } from '../api/category.js'
+import { getDepartmentSimple } from '../api/department.js'
 import { isPreviewable, getPreviewType, OFFICE_EXTS, IMAGE_MIME_MAP } from '../utils/preview.js'
 import { saveBlobAsFile } from '../utils/download.js'
 import { formatDate, formatFileSize, fileTypeTagType, confidentialityTagType, confidentialityLabel } from '../utils/format.js'
@@ -225,12 +273,16 @@ const { isMobile } = useMobile()
 const loading = ref(false)
 const documentList = ref([])
 const categoryOptions = ref([])
+const departmentOptions = ref([])
+const docLevels = ref(['无级别'])
 
 const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
 
 const searchForm = reactive({
   keyword: '',
-  category_id: ''
+  category_id: '',
+  department_id: '',
+  doc_level: ''
 })
 
 const detailVisible = ref(false)
@@ -255,7 +307,9 @@ async function fetchDocuments() {
       page: pagination.page,
       page_size: pagination.pageSize,
       keyword: searchForm.keyword || undefined,
-      category_id: searchForm.category_id || undefined
+      category_id: searchForm.category_id || undefined,
+      department_id: searchForm.department_id || undefined,
+      doc_level: searchForm.doc_level || undefined
     }
     const res = await getDocumentList(params)
     documentList.value = res.items || res.data || []
@@ -272,6 +326,27 @@ async function fetchCategories() {
     // 统一使用 getCategoryListSimple 获取全量分类
     const res = await getCategoryListSimple()
     categoryOptions.value = res.items || res.data || res || []
+  } catch {
+    // 错误已在拦截器中处理
+  }
+}
+
+async function fetchDepartments() {
+  try {
+    const res = await getDepartmentSimple()
+    const list = res.items || res.data || res || []
+    departmentOptions.value = Array.isArray(list) ? list : []
+  } catch {
+    // 错误已在拦截器中处理
+  }
+}
+
+async function fetchDocLevels() {
+  try {
+    const res = await getDocLevels()
+    if (res && Array.isArray(res.levels) && res.levels.length > 0) {
+      docLevels.value = res.levels
+    }
   } catch {
     // 错误已在拦截器中处理
   }
@@ -448,6 +523,8 @@ onMounted(() => {
   }
   fetchDocuments()
   fetchCategories()
+  fetchDepartments()
+  fetchDocLevels()
 })
 </script>
 

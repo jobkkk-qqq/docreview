@@ -272,6 +272,8 @@ async def upload_document(
         version=1,
         status="draft",
         category_id=doc_data.category_id,
+        department_id=doc_data.department_id,
+        doc_level=doc_data.doc_level or "无级别",
         confidential_level=doc_data.confidential_level,
         effective_date=doc_data.effective_date,
         expiry_date=doc_data.expiry_date,
@@ -279,7 +281,7 @@ async def upload_document(
     )
     session.add(document)
     await session.flush()
-    await session.refresh(document, ["category", "uploader"])
+    await session.refresh(document, ["category", "department", "uploader"])
 
     # Office 文件后台异步转换 PDF（失败不影响上传成功）
     if is_office:
@@ -328,6 +330,7 @@ async def get_document_by_id(session: AsyncSession, doc_id: int, include_deleted
         select(Document)
         .options(
             selectinload(Document.category).selectinload(Category.permissions),
+            selectinload(Document.department),
             selectinload(Document.uploader),
             selectinload(Document.permissions),
         )
@@ -345,6 +348,8 @@ async def list_documents(
     page_size: int = 20,
     keyword: str | None = None,
     category_id: int | None = None,
+    department_id: int | None = None,
+    doc_level: str | None = None,
     status_filter: str | None = None,
     uploaded_by: int | None = None,
     confidential_level: str | None = None,
@@ -378,6 +383,12 @@ async def list_documents(
     if category_id:
         stmt = stmt.where(Document.category_id == category_id)
         count_stmt = count_stmt.where(Document.category_id == category_id)
+    if department_id:
+        stmt = stmt.where(Document.department_id == department_id)
+        count_stmt = count_stmt.where(Document.department_id == department_id)
+    if doc_level:
+        stmt = stmt.where(Document.doc_level == doc_level)
+        count_stmt = count_stmt.where(Document.doc_level == doc_level)
     if status_filter:
         stmt = stmt.where(Document.status == status_filter)
         count_stmt = count_stmt.where(Document.status == status_filter)
@@ -428,6 +439,8 @@ async def list_documents_grouped(
     session: AsyncSession,
     keyword: str | None = None,
     category_id: int | None = None,
+    department_id: int | None = None,
+    doc_level: str | None = None,
     status_filter: str | None = None,
     confidential_level: str | None = None,
     current_user: User | None = None,
@@ -452,6 +465,10 @@ async def list_documents_grouped(
             | Document.summary.ilike(f"%{keyword}%")
             | Document.keywords.ilike(f"%{keyword}%")
         )
+    if department_id:
+        base_conditions.append(Document.department_id == department_id)
+    if doc_level:
+        base_conditions.append(Document.doc_level == doc_level)
     if status_filter:
         base_conditions.append(Document.status == status_filter)
     if confidential_level:
@@ -594,7 +611,7 @@ async def update_document(
         setattr(document, field, value)
 
     await session.flush()
-    await session.refresh(document, ["category", "uploader"])
+    await session.refresh(document, ["category", "department", "uploader"])
 
     await _create_audit_log(
         session, operator_id, "update", "document", doc_id, ip_address, update_data,
@@ -641,7 +658,7 @@ async def review_document(
         {"status": new_status, "comment": review_data.comment},
     )
 
-    await session.refresh(document, ["category", "uploader"])
+    await session.refresh(document, ["category", "department", "uploader"])
     return document
 
 

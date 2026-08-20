@@ -57,6 +57,30 @@
             </div>
           </el-form-item>
 
+          <!-- 部门（二级分类） -->
+          <el-form-item label="所属部门" prop="department_id">
+            <el-select v-model="uploadForm.department_id" placeholder="请选择部门（选填）" clearable style="width: 100%">
+              <el-option
+                v-for="item in departmentOptions"
+                :key="item.id"
+                :label="item.name"
+                :value="item.id"
+              />
+            </el-select>
+          </el-form-item>
+
+          <!-- 文档级别（三级分类） -->
+          <el-form-item label="文档级别" prop="doc_level">
+            <el-select v-model="uploadForm.doc_level" placeholder="请选择文档级别" style="width: 100%">
+              <el-option
+                v-for="lv in docLevels"
+                :key="lv"
+                :label="lv"
+                :value="lv"
+              />
+            </el-select>
+          </el-form-item>
+
           <!-- 保密等级 -->
           <el-form-item label="保密等级" prop="confidential_level">
             <el-radio-group v-model="uploadForm.confidential_level">
@@ -165,6 +189,30 @@
                   style="margin-left: 8px"
                 >推荐</el-tag>
               </el-option>
+            </el-select>
+          </el-form-item>
+
+          <!-- 部门（二级分类，统一） -->
+          <el-form-item label="所属部门" prop="department_id">
+            <el-select v-model="batchForm.department_id" placeholder="请选择部门（选填，统一应用到所有文件）" clearable style="width: 100%">
+              <el-option
+                v-for="item in departmentOptions"
+                :key="item.id"
+                :label="item.name"
+                :value="item.id"
+              />
+            </el-select>
+          </el-form-item>
+
+          <!-- 文档级别（三级分类，统一） -->
+          <el-form-item label="文档级别" prop="doc_level">
+            <el-select v-model="batchForm.doc_level" placeholder="请选择文档级别（统一应用到所有文件）" style="width: 100%">
+              <el-option
+                v-for="lv in docLevels"
+                :key="lv"
+                :label="lv"
+                :value="lv"
+              />
             </el-select>
           </el-form-item>
 
@@ -365,8 +413,9 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { UploadFilled, WarningFilled } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth.js'
-import { uploadDocument, batchUploadDocuments } from '../api/document.js'
+import { uploadDocument, batchUploadDocuments, getDocLevels } from '../api/document.js'
 import { getCategoryListSimple } from '../api/category.js'
+import { getDepartmentSimple } from '../api/department.js'
 import { getRoleListSimple } from '../api/role.js'
 
 const router = useRouter()
@@ -375,6 +424,8 @@ const authStore = useAuthStore()
 // ========== 公共数据 ==========
 const uploadMode = ref('single')
 const categoryOptions = ref([])
+const departmentOptions = ref([])
+const docLevels = ref(['无级别'])
 const roleOptions = ref([])
 const roleMap = ref({})
 const submitting = ref(false)
@@ -421,6 +472,8 @@ const uploadForm = reactive({
   title: '',
   doc_no: '',
   category_id: '',
+  department_id: '',
+  doc_level: '无级别',
   confidential_level: 'internal',
   summary: '',
   file: null,
@@ -479,6 +532,8 @@ async function handleSingleSubmit() {
       formData.append('title', uploadForm.title)
       if (uploadForm.doc_no) formData.append('doc_no', uploadForm.doc_no)
       formData.append('category_id', uploadForm.category_id)
+      if (uploadForm.department_id) formData.append('department_id', uploadForm.department_id)
+      formData.append('doc_level', uploadForm.doc_level)
       formData.append('confidential_level', uploadForm.confidential_level)
       if (uploadForm.summary) formData.append('summary', uploadForm.summary)
       if (uploadForm.role_ids.length > 0) {
@@ -510,6 +565,8 @@ function handleSingleReset() {
   uploadForm.title = ''
   uploadForm.doc_no = ''
   uploadForm.category_id = ''
+  uploadForm.department_id = ''
+  uploadForm.doc_level = '无级别'
   uploadForm.confidential_level = 'internal'
   uploadForm.summary = ''
   uploadForm.file = null
@@ -531,6 +588,8 @@ const batchResult = ref(null)
 
 const batchForm = reactive({
   category_id: '',
+  department_id: '',
+  doc_level: '无级别',
   confidential_level: 'internal',
   summary: '',
   role_ids: [],
@@ -587,6 +646,8 @@ async function handleBatchSubmit() {
         formData.append('files', f.raw)
       }
       formData.append('category_id', batchForm.category_id)
+      if (batchForm.department_id) formData.append('department_id', batchForm.department_id)
+      formData.append('doc_level', batchForm.doc_level)
       formData.append('confidential_level', batchForm.confidential_level)
       if (batchForm.summary) formData.append('summary', batchForm.summary)
       if (batchForm.role_ids.length > 0) {
@@ -611,6 +672,8 @@ async function handleBatchSubmit() {
 
 function handleBatchReset() {
   batchFileList.value = []
+  batchForm.department_id = ''
+  batchForm.doc_level = '无级别'
   batchForm.summary = ''
   batchForm.role_ids = []
   batchResult.value = null
@@ -637,6 +700,17 @@ onMounted(async () => {
         uploadForm.category_id = recommended.id
         batchForm.category_id = recommended.id
       }
+    }
+  } catch { /* ignore */ }
+  try {
+    const deptRes = await getDepartmentSimple()
+    const list = deptRes.items || deptRes.data || deptRes || []
+    departmentOptions.value = Array.isArray(list) ? list : []
+  } catch { /* ignore */ }
+  try {
+    const levelRes = await getDocLevels()
+    if (levelRes && Array.isArray(levelRes.levels) && levelRes.levels.length > 0) {
+      docLevels.value = levelRes.levels
     }
   } catch { /* ignore */ }
   try {

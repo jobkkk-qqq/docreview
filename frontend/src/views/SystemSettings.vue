@@ -191,6 +191,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { getSystemSettings, updateSystemSettings } from '../api/system.js'
 import { getDeletedDocuments, restoreDocument } from '../api/document.js'
+import { setBrandName } from '../utils/brand.js'
 import { useAuthStore } from '../stores/auth.js'
 
 const authStore = useAuthStore()
@@ -339,6 +340,7 @@ async function fetchSettings() {
         watermark_text: res.watermark_text || '',
         auto_review: res.auto_review === 'true'
       })
+      setBrandName(settingsForm.brand_name)
     }
   } catch (error) {
     // 首次加载可能没有配置，使用默认值
@@ -366,6 +368,7 @@ async function handleSave() {
         auto_review: String(settingsForm.auto_review)
       }
       await updateSystemSettings(submitData)
+      setBrandName(settingsForm.brand_name)
       ElMessage.success('配置保存成功')
     } catch (error) {
       // 错误已在拦截器中处理

@@ -5,21 +5,20 @@
 import request from './request.js'
 
 /**
+ * 获取部门简要列表（所有登录用户可访问，用于文档上传/筛选时选择二级分类）
+ * @returns {Promise}
+ */
+export function getDepartmentSimple() {
+  return request.get('/departments/simple')
+}
+
+/**
  * 获取部门列表
  * @param {Object} params - 查询参数
  * @returns {Promise}
  */
 export function getDepartmentList(params) {
   return request.get('/departments/', { params })
-}
-
-/**
- * 获取部门详情
- * @param {number} id - 部门 ID
- * @returns {Promise}
- */
-export function getDepartmentDetail(id) {
-  return request.get(`/departments/${id}`)
 }
 
 /**
