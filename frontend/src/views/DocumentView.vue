@@ -222,7 +222,7 @@
             <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="230" fixed="right">
           <template #default="{ row }">
             <el-button v-if="row.can_view" type="primary" link size="small" @click="handleVersionView(row)">查看</el-button>
             <el-button
@@ -232,6 +232,13 @@
               size="small"
               @click="handleDownload(row)"
             >下载</el-button>
+            <el-button
+              v-if="canDeleteVersion && !row.is_current && row.can_view"
+              type="danger"
+              link
+              size="small"
+              @click="handleDeleteVersion(row)"
+            >删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -344,15 +351,16 @@
  */
 import { ref, reactive, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
-import { getDocumentList, getDocumentDetail, downloadDocument, reportPreviewLog, getDocLevels, getDocumentVersions } from '../api/document.js'
+import { getDocumentList, getDocumentDetail, downloadDocument, reportPreviewLog, getDocLevels, getDocumentVersions, deleteDocument } from '../api/document.js'
 import { getCategoryListSimple } from '../api/category.js'
 import { getDepartmentSimple } from '../api/department.js'
 import { isPreviewable, getPreviewType, OFFICE_EXTS, IMAGE_MIME_MAP } from '../utils/preview.js'
 import { saveBlobAsFile } from '../utils/download.js'
 import { formatDate, formatFileSize, fileTypeTagType, confidentialityTagType, confidentialityLabel } from '../utils/format.js'
 import { useMobile } from '../composables/useMobile.js'
+import { canDeleteDocVersion } from '../utils/permission.js'
 import request from '../api/request.js'
 
 const route = useRoute()
@@ -401,6 +409,26 @@ async function handleVersionView(row) {
     currentDoc.value = res
     detailVisible.value = true
   } catch { return }
+}
+
+// 是否有「删除旧版本」权限（控制版本历史面板中的删除按钮）
+function canDeleteVersion() {
+  return canDeleteDocVersion()
+}
+
+// 删除旧的（非当前）版本：软删除该版本记录，可到回收站恢复
+async function handleDeleteVersion(row) {
+  if (!versionDoc.value) return
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除 v${row.version} 这个历史版本吗？删除后该版本将从版本历史中移除（可到回收站恢复），不影响其他版本。`,
+      '删除版本确认',
+      { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' }
+    )
+    await deleteDocument(row.id)
+    ElMessage.success(`已删除 v${row.version}`)
+    await handleVersions(versionDoc.value)
+  } catch { /* ignore */ }
 }
 
 // 预览对话框
