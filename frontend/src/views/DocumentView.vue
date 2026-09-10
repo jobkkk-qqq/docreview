@@ -67,7 +67,18 @@
 
       <el-table v-loading="loading" :data="documentList" border stripe style="width: 100%">
         <el-table-column prop="doc_no" label="文档编号" width="130" show-overflow-tooltip />
-        <el-table-column prop="title" label="文档标题" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="title" label="文档标题" min-width="200" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.title }}
+            <el-tag
+              v-if="row.version > 1 || row.version_total > 1"
+              size="small"
+              type="warning"
+              effect="plain"
+              style="margin-left:4px"
+            >v{{ row.version }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="文件类型" width="90">
           <template #default="{ row }">
             <el-tag size="small" :type="fileTypeTagType(row.file_name)">
@@ -121,6 +132,15 @@
               查看详情
             </el-button>
             <el-button
+              v-if="row.version_total > 1"
+              type="warning"
+              link
+              size="small"
+              @click="handleVersions(row)"
+            >
+              {{ row.version_total }}个版本
+            </el-button>
+            <el-button
               v-if="isPreviewable(row.file_name)"
               type="primary"
               link
@@ -157,6 +177,68 @@
         />
       </div>
     </el-card>
+
+    <!-- 版本历史对话框 -->
+    <el-dialog
+      v-model="versionVisible"
+      title="版本历史"
+      width="720px"
+      destroy-on-close
+      draggable
+    >
+      <div v-if="versionDoc" class="version-header">
+        <strong>{{ versionDoc.title }}</strong>
+        <span style="color:#86909c;font-size:12px">
+          （{{ versionItems.length > 0 ? `共 ${versionItems[0].version_total || versionItems.length} 个版本` : '暂无版本信息' }}）
+        </span>
+      </div>
+      <el-table
+        v-loading="versionLoading"
+        :data="versionItems"
+        border
+        size="small"
+        style="margin-top:12px"
+        max-height="380"
+      >
+        <el-table-column label="版本" width="76" align="center">
+          <template #default="{ row }">
+            <el-tag :type="row.is_current ? 'success' : 'info'" size="small" effect="plain">
+              v{{ row.version }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="标题" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.title }}</template>
+        </el-table-column>
+        <el-table-column label="上传人" width="110">
+          <template #default="{ row }">{{ row.uploader?.display_name || row.uploader?.username || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="上传时间" width="130" header-align="center">
+          <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
+        </el-table-column>
+        <el-table-column label="当前" width="64" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.is_current" type="success" size="small">当前</el-tag>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="150" fixed="right">
+          <template #default="{ row }">
+            <el-button v-if="row.can_view" type="primary" link size="small" @click="handleVersionView(row)">查看</el-button>
+            <el-button
+              v-if="row.can_download && row.can_view"
+              type="success"
+              link
+              size="small"
+              @click="handleDownload(row)"
+            >下载</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button type="primary" @click="versionVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 文档详情对话框 -->
     <el-dialog
@@ -264,7 +346,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
-import { getDocumentList, getDocumentDetail, downloadDocument, reportPreviewLog, getDocLevels } from '../api/document.js'
+import { getDocumentList, getDocumentDetail, downloadDocument, reportPreviewLog, getDocLevels, getDocumentVersions } from '../api/document.js'
 import { getCategoryListSimple } from '../api/category.js'
 import { getDepartmentSimple } from '../api/department.js'
 import { isPreviewable, getPreviewType, OFFICE_EXTS, IMAGE_MIME_MAP } from '../utils/preview.js'
@@ -295,6 +377,31 @@ const searchForm = reactive({
 
 const detailVisible = ref(false)
 const currentDoc = ref(null)
+
+// 版本历史
+const versionVisible = ref(false)
+const versionLoading = ref(false)
+const versionDoc = ref(null)
+const versionItems = ref([])
+
+async function handleVersions(row) {
+  versionDoc.value = row
+  versionItems.value = []
+  versionVisible.value = true
+  versionLoading.value = true
+  try {
+    const res = await getDocumentVersions(row.id)
+    versionItems.value = (res && res.items) || []
+  } catch { versionItems.value = [] } finally { versionLoading.value = false }
+}
+
+async function handleVersionView(row) {
+  try {
+    const res = await getDocumentDetail(row.id)
+    currentDoc.value = res
+    detailVisible.value = true
+  } catch { return }
+}
 
 // 预览对话框
 const previewVisible = ref(false)
@@ -540,5 +647,13 @@ onMounted(() => {
 .document-view {
   max-width: 1400px;
   margin: 0 auto;
+}
+.version-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #f7f8fa;
+  border-radius: 6px;
 }
 </style>

@@ -190,6 +190,10 @@ export function canDeleteDoc() {
   return hasPermission('delete_doc')
 }
 
+export function canDeleteDocVersion() {
+  return hasPermission('delete_doc_version')
+}
+
 export function canManageDocPermissions() {
   return hasPermission('manage_doc_permissions')
 }

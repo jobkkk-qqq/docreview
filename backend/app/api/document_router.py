@@ -89,11 +89,12 @@ async def upload_document(
     doc_level: str = Form(None, description="文档级别（三级分类），不传默认为无级别"),
     confidential_level: str = Form("internal", description="密级（默认 internal，公开文档请选 public）"),
     role_ids: str = Form(None, description="授权角色ID列表（逗号分隔，如 1,2,3）"),
+    parent_doc_id: int = Form(None, description="作为该文档的新版本上传（关联的文档ID，不传则新建独立文档）"),
     file: UploadFile = File(..., description="文件"),
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_permission("upload_doc")),
 ):
-    """上传新文档，保存文件到 doc-repo 目录"""
+    """上传新文档，保存文件到 doc-repo 目录。若指定 parent_doc_id 则作为该文档的新版本。"""
     # 读取文件内容
     file_content = await file.read()
     file_size = len(file_content)
@@ -106,6 +107,12 @@ async def upload_document(
     # 校验部门与文档级别
     final_doc_level = await _validate_dept_and_level(session, department_id, doc_level)
 
+    # 若作为某文档的新版本上传，校验父文档可见性
+    if parent_doc_id:
+        parent_doc = await doc_service.get_document_by_id(session, parent_doc_id)
+        if parent_doc is None or not can_user_view_document(current_user, parent_doc):
+            raise HTTPException(status_code=404, detail="关联的文档不存在，无法上传为新版本")
+
     # 构建文档数据
     doc_data = DocumentCreate(
         title=title,
@@ -116,6 +123,7 @@ async def upload_document(
         department_id=department_id,
         doc_level=final_doc_level,
         confidential_level=confidential_level,
+        parent_doc_id=parent_doc_id,
     )
 
     # 业务角色分类范围校验
@@ -165,6 +173,7 @@ async def batch_upload_documents(
     confidential_level: str = Form("internal", description="保密等级（统一应用到所有文件）"),
     summary: str = Form(None, description="文档摘要（选填，统一应用）"),
     role_ids: str = Form(None, description="授权角色ID列表（逗号分隔，如 1,2,3）"),
+    parent_doc_ids: str = Form(None, description="逐文件版本关联父文档ID列表（逗号分隔，按 files 顺序对应，可为空或用 , 占位）"),
     files: list[UploadFile] = File(..., description="文件列表（支持多个）"),
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_permission("upload_doc")),
@@ -189,12 +198,28 @@ async def batch_upload_documents(
     success_count = 0
     fail_count = 0
 
-    for up_file in files:
+    # 解析逐文件版本关联父文档ID（逗号分隔，按 files 顺序对应）
+    parent_doc_id_list = []
+    if parent_doc_ids:
+        try:
+            parent_doc_id_list = [
+                int(x.strip()) if x.strip() else None
+                for x in parent_doc_ids.split(",")
+            ]
+        except ValueError:
+            raise HTTPException(status_code=400, detail="parent_doc_ids 格式错误，请用逗号分隔数字ID")
+
+    for index, up_file in enumerate(files):
         try:
             file_content = await up_file.read()
             # 标题自动取文件名（去扩展名）
             original_name = up_file.filename or "未命名"
             auto_title = Path(original_name).stem or original_name
+
+            # 按顺序取对应父文档ID（超出则以 None 处理）
+            parent_doc_id = None
+            if index < len(parent_doc_id_list):
+                parent_doc_id = parent_doc_id_list[index]
 
             doc_data = DocumentCreate(
                 title=auto_title,
@@ -203,6 +228,7 @@ async def batch_upload_documents(
                 doc_level=final_doc_level,
                 confidential_level=confidential_level,
                 summary=summary,
+                parent_doc_id=parent_doc_id,
             )
 
             document = await doc_service.upload_document(
@@ -230,6 +256,17 @@ async def batch_upload_documents(
         "failed": fail_count,
         "results": results,
     }
+
+
+@router.get("/check-name", summary="同名文件检测（上传时版本关联提醒）")
+async def check_same_name(
+    file_name: str = Query(..., description="原始文件名（含扩展名）"),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user),
+):
+    """按原始文件名检测当前用户可见的同名文档，用于上传时提示可加入版本。"""
+    items = await doc_service.find_same_name_documents(session, file_name, current_user)
+    return {"items": items}
 
 
 @router.get("/", summary="文档列表")
@@ -314,6 +351,45 @@ async def get_deleted_documents(
         "page": page,
         "page_size": page_size,
     }
+
+
+@router.get("/{doc_id}/versions", summary="获取文档版本历史")
+async def get_document_versions(
+    doc_id: int,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user),
+):
+    """获取某文档所在版本组的全部可见版本（按版本号倒序）。"""
+    document = await doc_service.get_document_by_id(session, doc_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    if not can_user_view_document(current_user, document):
+        raise HTTPException(status_code=404, detail="文档不存在")
+    items = await doc_service.list_version_history(session, document, current_user)
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/{doc_id}/versions/{version}/rollback", summary="回滚到指定版本")
+async def rollback_document_version(
+    doc_id: int,
+    version: int,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user),
+):
+    """回滚到指定历史版本，使其成为当前可见版本（需可编辑该文档）。"""
+    document = await doc_service.get_document_by_id(session, doc_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    if not can_user_view_document(current_user, document):
+        raise HTTPException(status_code=404, detail="文档不存在")
+    if not current_user.is_superuser and not can_user_edit_document(current_user, document):
+        raise HTTPException(status_code=403, detail="没有编辑该文档的权限，无法回滚版本")
+    ip_address = get_client_ip(request)
+    result = await doc_service.rollback_document_version(
+        session, document, version, current_user.id, ip_address,
+    )
+    return {"detail": f"已回滚到 v{result['version']}", "version": result["version"]}
 
 
 @router.get("/{doc_id}", summary="文档详情")

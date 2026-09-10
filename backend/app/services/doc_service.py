@@ -7,9 +7,9 @@ from datetime import date
 from pathlib import Path
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
 from app.config import settings
 from app.core.timezone import beijing_now
@@ -216,6 +216,33 @@ async def upload_document(
     content_hash = hashlib.sha256(file_content).hexdigest()
     print(f"[DocService] 上传文件 SHA-256: {content_hash}")
 
+    # ── 版本关联解析：作为某文档的新版本上传（可选）──────────────
+    version_group_root_id: int | None = None
+    version_no = 1
+    parent_doc: Document | None = None
+    if doc_data.parent_doc_id:
+        parent_doc = await get_document_by_id(session, doc_data.parent_doc_id)
+        if parent_doc is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="关联的文档不存在或已删除，无法上传为新版本",
+            )
+        version_group_root_id = parent_doc.version_group_id or parent_doc.id
+        # 计算组内下一个版本号（统计组内全部版本的最大值 + 1）
+        # 注意：必须包含已删除版本，避免版本号被复用。
+        # 否则若 v2 被删除后上传新版本得到 v2，再从回收站恢复旧 v2，组内会出现两个 v2 导致排列冲突。
+        max_child_stmt = select(func.max(Document.version)).where(
+            Document.version_group_id == version_group_root_id,
+        )
+        max_child = (await session.execute(max_child_stmt)).scalar()
+        version_no = max(max_child or 0, parent_doc.version or 1) + 1
+        # 继承父文档的分类、部门、文档级别（分类/部门可被上传参数覆盖，文档级别沿用父文档）
+        if doc_data.category_id is None:
+            doc_data.category_id = parent_doc.category_id
+        if doc_data.department_id is None:
+            doc_data.department_id = parent_doc.department_id
+        doc_data.doc_level = parent_doc.doc_level or "无级别"
+
     # 重复检测：查询是否存在相同哈希值且未删除的文档
     # 使用 first() 而非 scalar_one_or_none()，避免有多个匹配记录时抛出 MultipleResultsFound
     dup_stmt = select(Document).where(
@@ -224,6 +251,12 @@ async def upload_document(
     ).limit(1)
     dup_result = await session.execute(dup_stmt)
     existing_doc = dup_result.scalar_one_or_none()
+    if existing_doc is not None:
+        # 作为新版本上传时，若重复文件属于同一版本组，视为有意重复，放行
+        if parent_doc is not None:
+            existing_key = existing_doc.version_group_id or existing_doc.id
+            if existing_key == version_group_root_id:
+                existing_doc = None
     if existing_doc is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -275,7 +308,8 @@ async def upload_document(
         file_type=file_type,
         pdf_path=None,
         content_hash=content_hash,
-        version=1,
+        version=version_no,
+        version_group_id=version_group_root_id,
         status="draft",
         category_id=doc_data.category_id,
         department_id=doc_data.department_id,
@@ -295,10 +329,12 @@ async def upload_document(
             _background_convert_to_pdf(document.id, full_path, full_dir, relative_dir)
         )
 
-    # 记录审计日志
+    # 记录审计日志（含版本信息）
+    version_detail = {"title": doc_data.title, "file_name": file_name}
+    if parent_doc is not None:
+        version_detail.update({"action_kind": "new_version", "parent_doc_id": parent_doc.id, "version": version_no})
     await _create_audit_log(
-        session, uploader.id, "create", "document", document.id, ip_address,
-        {"title": doc_data.title, "file_name": file_name},
+        session, uploader.id, "create", "document", document.id, ip_address, version_detail,
     )
 
     # 文档权限：授予 上传者显式选择的授权角色 + 分类默认授权角色
@@ -321,6 +357,40 @@ async def upload_document(
 
     if granted_role_ids:
         await session.flush()
+
+    # 新版本：继承父文档的角色级权限，保证组内各版本对同一批角色可见/可下载
+    if parent_doc is not None:
+        inherited_count = 0
+        parent_perms = (
+            await session.execute(
+                select(DocumentPermission).where(
+                    DocumentPermission.document_id == parent_doc.id,
+                    DocumentPermission.role_id.isnot(None),
+                )
+            )
+        ).scalars().all()
+        for p in parent_perms:
+            check_perm = (
+                await session.execute(
+                    select(DocumentPermission.id).where(
+                        DocumentPermission.document_id == document.id,
+                        DocumentPermission.role_id == p.role_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if check_perm is None:
+                session.add(DocumentPermission(
+                    document_id=document.id,
+                    role_id=p.role_id,
+                    can_view=p.can_view,
+                    can_download=p.can_download,
+                    can_print=p.can_print,
+                    can_edit=p.can_edit,
+                    granted_by=uploader.id,
+                ))
+                inherited_count += 1
+        if inherited_count:
+            await session.flush()
 
     # 分类默认授权角色自动授权（显式已授权的角色自动跳过）
     auto_role_ids = await _grant_category_default_roles(session, document, uploader.id)
@@ -357,6 +427,57 @@ async def get_document_by_id(session: AsyncSession, doc_id: int, include_deleted
     return result.scalar_one_or_none()
 
 
+def _pick_current_versions(documents: list[Document]) -> list[Document]:
+    """每个版本组只保留版本号最大（当前可见）的一条文档。"""
+    best: dict[int, Document] = {}
+    for d in documents:
+        key = d.version_group_id or d.id
+        cur = best.get(key)
+        if cur is None or (d.version or 1) > (cur.version or 1):
+            best[key] = d
+    return list(best.values())
+
+
+async def _load_version_totals(session: AsyncSession) -> dict[int, int]:
+    """返回 {分组键: 组内可见版本总数}。分组键 = 根文档 version_group_id（根文档自身计为 1 版）。"""
+    rows = (
+        await session.execute(
+            select(Document.version_group_id, func.count())
+            .where(Document.is_deleted == False, Document.version_group_id.isnot(None))
+            .group_by(Document.version_group_id)
+        )
+    ).all()
+    totals: dict[int, int] = {}
+    for gid, cnt in rows:
+        totals[gid] = 1 + (cnt or 0)
+    return totals
+
+
+def _current_version_condition():
+    """SQL 条件：仅保留每个版本组中版本号最大、且未被删除的文档（当前可见版本）。
+
+    独立文档（version_group_id 为空）以自身 ID 作为分组键，始终满足条件。
+    新版本被删除后，次高版本会自动成为当前版本（无需额外回退逻辑）。
+    """
+    D = Document
+    D2 = aliased(Document)
+    return ~exists().where(
+        D2.is_deleted == False,
+        func.coalesce(D2.version_group_id, D2.id) == func.coalesce(D.version_group_id, D.id),
+        D2.version > D.version,
+    ).correlate(D)
+
+
+async def _attach_version_totals(session: AsyncSession, documents: list[Document]) -> None:
+    """为列表文档补齐 version_total（每组可见版本总数）。"""
+    if not documents:
+        return
+    totals = await _load_version_totals(session)
+    for d in documents:
+        key = d.version_group_id or d.id
+        d.version_total = totals.get(key, 1)
+
+
 async def list_documents(
     session: AsyncSession,
     page: int = 1,
@@ -374,17 +495,19 @@ async def list_documents(
     from app.services.permission_service import get_document_visibility_filter, can_user_download_document, can_user_print_document, can_user_print_document
     from app.models.category import Category
 
+    current_cond = _current_version_condition()
+
     stmt = (
         select(Document)
         .options(
             selectinload(Document.permissions),
             selectinload(Document.category).selectinload(Category.permissions),
         )
-        .where(Document.is_deleted == False)
+        .where(Document.is_deleted == False, current_cond)
     )
     count_stmt = (
         select(func.count()).select_from(Document)
-        .where(Document.is_deleted == False)
+        .where(Document.is_deleted == False, current_cond)
     )
 
     if keyword:
@@ -436,6 +559,10 @@ async def list_documents(
 
     # 过滤掉已标记删除的文档（与 list_documents_grouped 保持一致）
     valid_documents = [d for d in documents if not d.is_deleted]
+
+    # 版本收敛：每个版本组只保留当前可见版本（SQL 已过滤，此处为兜底）
+    valid_documents = _pick_current_versions(valid_documents)
+    await _attach_version_totals(session, valid_documents)
 
     # 为每个文档计算当前用户的下载/打印权限、过期标记和是否有PDF预览
     if current_user:
@@ -498,6 +625,8 @@ async def list_documents_grouped(
     if current_user and not current_user.is_superuser:
         visibility_filter = get_document_visibility_filter(current_user)
 
+    current_cond = _current_version_condition()
+
     # 查询需要显示的分类
     cat_stmt = select(Category).order_by(Category.sort_order, Category.name)
     if category_id:
@@ -512,7 +641,7 @@ async def list_documents_grouped(
         cat_total_stmt = (
             select(func.count())
             .select_from(Document)
-            .where(Document.category_id == cat.id, *base_conditions)
+            .where(Document.category_id == cat.id, *base_conditions, current_cond)
         )
         if visibility_filter is not None:
             cat_total_stmt = cat_total_stmt.where(visibility_filter)
@@ -525,7 +654,7 @@ async def list_documents_grouped(
         cat_docs_stmt = (
             select(Document)
             .options(selectinload(Document.permissions))
-            .where(Document.category_id == cat.id)
+            .where(Document.category_id == cat.id, current_cond)
             .order_by(Document.created_at.desc())
         )
         for cond in base_conditions:
@@ -556,6 +685,9 @@ async def list_documents_grouped(
                 doc.can_print = False
             valid_docs.append(doc)
 
+        valid_docs = _pick_current_versions(valid_docs)
+        await _attach_version_totals(session, valid_docs)
+
         groups.append({
             "id": cat.id,
             "name": cat.name,
@@ -568,7 +700,7 @@ async def list_documents_grouped(
         uncat_total_stmt = (
             select(func.count())
             .select_from(Document)
-            .where(Document.category_id.is_(None), *base_conditions)
+            .where(Document.category_id.is_(None), *base_conditions, current_cond)
         )
         if visibility_filter is not None:
             uncat_total_stmt = uncat_total_stmt.where(visibility_filter)
@@ -578,7 +710,7 @@ async def list_documents_grouped(
             uncat_stmt = (
                 select(Document)
                 .options(selectinload(Document.permissions))
-                .where(Document.category_id.is_(None), *base_conditions)
+                .where(Document.category_id.is_(None), *base_conditions, current_cond)
             )
             if visibility_filter is not None:
                 uncat_stmt = uncat_stmt.where(visibility_filter)
@@ -605,6 +737,9 @@ async def list_documents_grouped(
                     doc.can_download = False
                     doc.can_print = False
                 valid_uncat.append(doc)
+
+            valid_uncat = _pick_current_versions(valid_uncat)
+            await _attach_version_totals(session, valid_uncat)
 
             groups.append({
                 "id": None,
@@ -915,7 +1050,12 @@ async def get_recent_documents(
     """获取当前用户可见的最近上传文档。"""
     from app.services.permission_service import get_document_visibility_filter
 
-    stmt = select(Document).where(Document.is_deleted == False).order_by(Document.created_at.desc()).limit(limit)
+    stmt = (
+        select(Document)
+        .where(Document.is_deleted == False, _current_version_condition())
+        .order_by(Document.created_at.desc())
+        .limit(limit)
+    )
     if current_user and not current_user.is_superuser:
         visibility = get_document_visibility_filter(current_user)
         if visibility is not None:
@@ -923,6 +1063,8 @@ async def get_recent_documents(
 
     result = await session.execute(stmt)
     documents = list(result.scalars().all())
+    documents = _pick_current_versions(documents)
+    await _attach_version_totals(session, documents)
 
     # 自动检测物理文件缺失的文档，标记为已删除
     if documents:
@@ -1048,3 +1190,157 @@ async def _grant_category_default_roles(
     if auto_granted:
         await session.flush()
     return auto_granted
+
+
+async def list_version_history(
+    session: AsyncSession,
+    doc: Document,
+    current_user: User | None = None,
+) -> list[dict]:
+    """返回某文档所在版本组的全部可见版本，按版本号倒序。"""
+    from app.services.permission_service import (
+        can_user_view_document, can_user_download_document, can_user_print_document,
+    )
+
+    group_key = doc.version_group_id or doc.id
+    stmt = (
+        select(Document)
+        .options(
+            selectinload(Document.uploader),
+            selectinload(Document.category),
+            selectinload(Document.department),
+        )
+        .where(
+            Document.is_deleted == False,
+            func.coalesce(Document.version_group_id, Document.id) == group_key,
+        )
+        .order_by(Document.version.desc())
+    )
+    result = await session.execute(stmt)
+    versions = list(result.scalars().all())
+    group_max = max((v.version or 1) for v in versions) if versions else doc.version or 1
+
+    group_totals = await _load_version_totals(session)
+    version_total = group_totals.get(group_key, len(versions) if versions else 1)
+
+    items = []
+    for v in versions:
+        if current_user:
+            can_view = can_user_view_document(current_user, v)
+            can_download = can_user_download_document(current_user, v)
+            can_print = can_user_print_document(current_user, v)
+        else:
+            can_view = can_download = can_print = False
+        items.append({
+            "id": v.id,
+            "version": v.version or 1,
+            "title": v.title,
+            "doc_no": v.doc_no,
+            "file_name": v.file_name,
+            "file_size": v.file_size,
+            "confidential_level": v.confidential_level,
+            "summary": v.summary,
+            "created_at": v.created_at,
+            "is_current": (v.version or 1) >= group_max,
+            "can_view": can_view,
+            "can_download": can_download,
+            "can_print": can_print,
+            "has_pdf": bool(v.pdf_path),
+            "version_total": version_total,
+            "uploader": {
+                "id": v.uploader.id if v.uploader else None,
+                "display_name": v.uploader.display_name if v.uploader else None,
+                "username": v.uploader.username if v.uploader else None,
+            },
+        })
+    return items
+
+
+async def rollback_document_version(
+    session: AsyncSession,
+    doc: Document,
+    target_version: int,
+    operator_id: int,
+    ip_address: str = "",
+) -> dict:
+    """回滚到指定历史版本：将该版本的版本号提升为组内最大，使其成为当前可见版本。
+
+    保留其余版本在历史中，目标版本内容即成为最新（当前）版本。
+    """
+    group_key = doc.version_group_id or doc.id
+    stmt = select(Document).where(
+        Document.is_deleted == False,
+        func.coalesce(Document.version_group_id, Document.id) == group_key,
+    )
+    result = await session.execute(stmt)
+    versions = list(result.scalars().all())
+    if not versions:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文档不存在")
+
+    group_max = max((v.version or 1) for v in versions)
+    target = next((v for v in versions if (v.version or 1) == target_version), None)
+    if target is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"版本 v{target_version} 不存在或已被删除",
+        )
+    if target_version >= group_max:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="该版本已是当前最新版本，无需回滚",
+        )
+
+    target.version = group_max + 1
+    await session.flush()
+
+    await _create_audit_log(
+        session, operator_id, "rollback", "document", target.id, ip_address,
+        {"to_version": target.version, "from_version": target_version, "group_key": group_key},
+    )
+    return {"id": target.id, "version": target.version}
+
+
+async def find_same_name_documents(
+    session: AsyncSession,
+    file_name: str,
+    current_user: User | None,
+    limit: int = 10,
+) -> list[dict]:
+    """按原始文件名检测同名文档（用于上传时的「同名文件加入版本」提醒）。
+
+    仅返回当前用户可见的文档，限制返回条数避免列表过大。
+    """
+    from app.services.permission_service import get_document_visibility_filter
+
+    file_name = (file_name or "").strip()
+    if not file_name:
+        return []
+
+    stmt = (
+        select(Document)
+        .options(selectinload(Document.uploader))
+        .where(Document.is_deleted == False, Document.file_name == file_name)
+        .order_by(Document.created_at.desc())
+        .limit(limit)
+    )
+    if current_user and not current_user.is_superuser:
+        visibility = get_document_visibility_filter(current_user)
+        if visibility is not None:
+            stmt = stmt.where(visibility)
+
+    result = await session.execute(stmt)
+    docs = result.scalars().all()
+    docs = _pick_current_versions(list(docs))
+
+    return [
+        {
+            "id": d.id,
+            "title": d.title,
+            "file_name": d.file_name,
+            "version": d.version or 1,
+            "version_total": None,  # schema/list 单独查询时前端按实际展示
+            "created_at": d.created_at,
+            "uploader": d.uploader.display_name if d.uploader else None,
+        }
+        for d in docs
+    ]

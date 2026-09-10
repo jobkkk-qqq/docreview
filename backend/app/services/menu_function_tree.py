@@ -2,7 +2,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.role import Permission
+from app.models.role import Permission, role_permission_table
 
 
 # 菜单-功能树配置
@@ -17,7 +17,8 @@ MENU_FUNCTION_TREE = [
     {"code": "upload_doc", "name": "上传文档", "type": "function", "parent": "view_doc_list", "sort": 2},
     {"code": "modify_doc", "name": "修改文档信息", "type": "function", "parent": "view_doc_list", "sort": 3},
     {"code": "delete_doc", "name": "删除文档", "type": "function", "parent": "view_doc_list", "sort": 4},
-    {"code": "print_doc", "name": "预览/打印文档", "type": "function", "parent": "view_doc_list", "sort": 5},
+    {"code": "delete_doc_version", "name": "删除旧版本", "type": "function", "parent": "view_doc_list", "sort": 5},
+    {"code": "print_doc", "name": "预览/打印文档", "type": "function", "parent": "view_doc_list", "sort": 6},
     {"code": "download_doc", "name": "下载文档", "type": "function", "parent": "view_doc_list", "sort": 6},
     {"code": "manage_doc_permissions", "name": "管理文档权限", "type": "function", "parent": "view_doc_list", "sort": 7},
     {"code": "review_doc", "name": "审核文档", "type": "function", "parent": "view_doc_list", "sort": 8},
@@ -136,3 +137,42 @@ def translate_permission_codes(codes: list[str]) -> list[str]:
     """将权限 code 列表翻译为中文名称列表"""
     name_map = get_permission_name_map()
     return [name_map.get(c, c) for c in codes]
+
+
+async def grant_delete_version_to_capable_roles(session: AsyncSession) -> None:
+    """
+    幂等：删除旧版本权限随文档删除权限联动授权。
+
+    为确保新增 delete_doc_version 权限后不破坏现状，自动给所有已拥有
+    delete_doc（删除文档）的角色补授 delete_doc_version（删除旧版本）。
+    """
+    version_perm = (
+        await session.execute(select(Permission).where(Permission.code == "delete_doc_version"))
+    ).scalar_one_or_none()
+    if version_perm is None:
+        return
+
+    delete_perm = (
+        await session.execute(select(Permission).where(Permission.code == "delete_doc"))
+    ).scalar_one_or_none()
+    role_ids: set[int] = set()
+    if delete_perm is not None:
+        result = await session.execute(
+            select(role_permission_table.c.role_id).where(
+                role_permission_table.c.permission_id == delete_perm.id
+            )
+        )
+        role_ids = {row[0] for row in result.all()}
+
+    existing = await session.execute(
+        select(role_permission_table.c.role_id).where(
+            role_permission_table.c.permission_id == version_perm.id
+        )
+    )
+    already = {row[0] for row in existing.all()}
+
+    for role_id in role_ids - already:
+        await session.execute(
+            role_permission_table.insert().values(role_id=role_id, permission_id=version_perm.id)
+        )
+    await session.flush()

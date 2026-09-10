@@ -115,7 +115,16 @@
                 </div>
 
                 <!-- 文档标题 -->
-                <div class="card-title" :title="doc.title">{{ doc.title }}</div>
+                <div class="card-title" :title="doc.title">
+                  {{ doc.title }}
+                  <el-tag
+                    v-if="doc.version > 1 || doc.version_total > 1"
+                    size="small"
+                    type="warning"
+                    effect="plain"
+                    class="card-version-tag"
+                  >v{{ doc.version }}</el-tag>
+                </div>
 
                 <!-- 文档编号 -->
                 <div class="card-doc-no" v-if="doc.doc_no">
@@ -145,6 +154,9 @@
                 <!-- 悬浮操作栏 -->
                 <div class="card-actions" @click.stop>
                   <el-button type="primary" link size="small" @click.stop="handleView(doc)">查看</el-button>
+                  <el-button v-if="doc.version_total > 1" type="warning" link size="small" @click.stop="handleVersions(doc)">
+                    {{ doc.version_total }}个版本
+                  </el-button>
                   <el-button v-if="canEdit" type="warning" link size="small" @click.stop="handleEdit(doc)">编辑</el-button>
                   <el-button v-if="doc.can_download !== false" type="success" link size="small" @click.stop="handleDownload(doc)">下载</el-button>
                   <el-button
@@ -183,6 +195,13 @@
                         {{ (row.file_name||'?').split('.').pop()?.toUpperCase() || '?' }}
                       </el-tag>
                       <span class="list-title" :title="row.title">{{ row.title }}</span>
+                      <el-tag
+                        v-if="row.version > 1 || row.version_total > 1"
+                        size="small"
+                        type="warning"
+                        effect="plain"
+                        class="list-version-tag"
+                      >v{{ row.version }}</el-tag>
                     </div>
                   </template>
                 </el-table-column>
@@ -222,6 +241,9 @@
                   <template #default="{ row }">
                     <div class="table-op-btns">
                     <el-button type="primary" link size="small" @click.stop="handleView(row)">查看</el-button>
+                    <el-button v-if="row.version_total > 1" type="warning" link size="small" @click.stop="handleVersions(row)">
+                      {{ row.version_total }}个版本
+                    </el-button>
                     <el-button v-if="canEdit" type="warning" link size="small" @click.stop="handleEdit(row)">编辑</el-button>
                     <el-button v-if="row.can_download !== false" type="success" link size="small" @click.stop="handleDownload(row)">下载</el-button>
                     <el-button
@@ -555,6 +577,83 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 版本历史对话框 -->
+    <el-dialog
+      v-model="versionVisible"
+      title="版本历史"
+      width="760px"
+      destroy-on-close
+      draggable
+    >
+      <div v-if="versionDoc" class="version-header">
+        <el-icon :size="16" color="#165dff"><Document /></el-icon>
+        <strong>{{ versionDoc.title }}</strong>
+        <span style="color:#86909c;font-size:12px">
+          （{{ versionItems.length > 0 ? `共 ${versionItems[0].version_total || versionItems.length} 个版本` : '暂无版本信息' }}）
+        </span>
+      </div>
+      <el-table
+        v-loading="versionLoading"
+        :data="versionItems"
+        border
+        size="small"
+        style="margin-top:12px"
+        max-height="380"
+      >
+        <el-table-column label="版本" width="76" align="center">
+          <template #default="{ row }">
+            <el-tag :type="row.is_current ? 'success' : 'info'" size="small" effect="plain">
+              v{{ row.version }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="标题" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.title }}</template>
+        </el-table-column>
+        <el-table-column label="上传人" width="110">
+          <template #default="{ row }">{{ row.uploader?.display_name || row.uploader?.username || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="上传时间" width="130" header-align="center">
+          <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
+        </el-table-column>
+        <el-table-column label="当前" width="64" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.is_current" type="success" size="small">当前</el-tag>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="220" fixed="right">
+          <template #default="{ row }">
+            <el-button v-if="row.can_view" type="primary" link size="small" @click="handleView(row)">查看</el-button>
+            <el-button
+              v-if="row.can_download && row.can_view"
+              type="success"
+              link
+              size="small"
+              @click="handleDownload(row)"
+            >下载</el-button>
+            <el-button
+              v-if="canEdit && !row.is_current && row.can_view"
+              type="warning"
+              link
+              size="small"
+              @click="handleRollback(row)"
+            >设为当前</el-button>
+            <el-button
+              v-if="canDeleteVersion && !row.is_current && row.can_view"
+              type="danger"
+              link
+              size="small"
+              @click="handleDeleteVersion(row)"
+            >删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button type="primary" @click="versionVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -568,13 +667,13 @@ import {
 import {
   getDocumentGrouped, getDocumentDetail, downloadDocument, deleteDocument,
   updateDocument, reportPreviewLog, getDocPermissions, grantDocPermission,
-  revokeDocPermission, getDocLevels
+  revokeDocPermission, getDocLevels, getDocumentVersions, rollbackDocumentVersion
 } from '../api/document.js'
 import { getCategoryListSimple } from '../api/category.js'
 import { getDepartmentSimple } from '../api/department.js'
 import { getUserList } from '../api/user.js'
 import { getRoleList } from '../api/role.js'
-import { canUploadDoc, canModifyDoc, canDeleteDoc, canManageDocPermissions } from '../utils/permission.js'
+import { canUploadDoc, canModifyDoc, canDeleteDoc, canManageDocPermissions, canDeleteDocVersion } from '../utils/permission.js'
 import { isPreviewable, getPreviewType, OFFICE_EXTS, IMAGE_MIME_MAP } from '../utils/preview.js'
 import { saveBlobAsFile } from '../utils/download.js'
 import { formatDate, formatFileSize, fileTypeTagType, confidentialityTagType, confidentialityLabel } from '../utils/format.js'
@@ -625,6 +724,12 @@ const previewDownloadRow = ref(null)
 const previewErrorTitle = ref('无法预览')
 const previewErrorMessage = ref('该文件格式暂不支持在线预览，请下载后查看')
 
+// 版本历史
+const versionVisible = ref(false)
+const versionLoading = ref(false)
+const versionDoc = ref(null)
+const versionItems = ref([])
+
 // 权限管理
 const permVisible = ref(false)
 const permDoc = ref(null)
@@ -653,6 +758,7 @@ const batchPerm = reactive({
 // 权限计算
 const canUpload = computed(() => canUploadDoc())
 const canDelete = computed(() => canDeleteDoc())
+const canDeleteVersion = computed(() => canDeleteDocVersion())
 const canEdit = computed(() => canModifyDoc())
 const canManagePermissions = computed(() => canManageDocPermissions())
 
@@ -752,6 +858,54 @@ async function handleView(row) {
   try {
     currentDoc.value = await getDocumentDetail(row.id)
     detailVisible.value = true
+  } catch { /* ignore */ }
+}
+
+// 版本历史
+async function handleVersions(row) {
+  versionDoc.value = row
+  versionItems.value = []
+  versionVisible.value = true
+  versionLoading.value = true
+  try {
+    const res = await getDocumentVersions(row.id)
+    versionItems.value = (res && res.items) || []
+  } catch { versionItems.value = [] } finally { versionLoading.value = false }
+}
+
+async function handleRollback(row) {
+  if (!versionDoc.value) return
+  try {
+    await ElMessageBox.confirm(
+      `确定要将该文档回滚到 v${row.version} 吗？回滚后该版本将成为当前可见版本，不影响历史版本。`,
+      '回滚确认',
+      { confirmButtonText: '确认回滚', cancelButtonText: '取消', type: 'warning' }
+    )
+    await rollbackDocumentVersion(versionDoc.value.id, row.version)
+    ElMessage.success(`已回滚到 v${row.version}`)
+    versionVisible.value = false
+    fetchGroupedDocuments()
+  } catch { /* ignore */ }
+}
+
+// 删除旧版本：软删除该版本记录，其余版本不受影响
+async function handleDeleteVersion(row) {
+  if (!versionDoc.value) return
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除 v${row.version} 这个历史版本吗？删除后该版本将从版本历史中移除（可到回收站恢复），不影响其他版本。`,
+      '删除版本确认',
+      { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' }
+    )
+    await deleteDocument(row.id)
+    ElMessage.success(`已删除 v${row.version}`)
+    // 刷新版本历史：若当前文档本身被删除则关闭面板
+    const res = await getDocumentVersions(versionDoc.value.id)
+    versionItems.value = (res && res.items) || []
+    if (versionItems.value.length === 0) {
+      versionVisible.value = false
+    }
+    fetchGroupedDocuments()
   } catch { /* ignore */ }
 }
 
@@ -1163,6 +1317,25 @@ onMounted(() => { fetchGroupedDocuments(); fetchOptions() })
   text-overflow: ellipsis;
   white-space: nowrap;
   transition: color 0.15s;
+}
+.list-version-tag {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* ── 版本历史 ── */
+.version-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  padding: 8px 12px;
+  background: #f7f8fa;
+  border-radius: 6px;
+}
+.card-version-tag {
+  flex-shrink: 0;
+  margin-left: 4px;
 }
 
 /* ── 单个文档卡片 ── */

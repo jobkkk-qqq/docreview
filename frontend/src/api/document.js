@@ -64,6 +64,34 @@ export function batchUploadDocuments(formData) {
 }
 
 /**
+ * 同名文件检测（上传时版本关联提醒）
+ * @param {string} file_name - 原始文件名（含扩展名）
+ * @returns {Promise} - { items: [{ id, title, file_name, version, created_at, uploader }] }
+ */
+export function checkSameName(file_name) {
+  return request.get('/documents/check-name', { params: { file_name } })
+}
+
+/**
+ * 获取文档版本历史
+ * @param {number} id - 文档 ID（组内任一个版本）
+ * @returns {Promise} - { items: [{ id, version, title, ... is_current, can_download }], total }
+ */
+export function getDocumentVersions(id) {
+  return request.get(`/documents/${id}/versions`)
+}
+
+/**
+ * 回滚到指定历史版本
+ * @param {number} id - 文档 ID（组内任一个版本）
+ * @param {number} version - 目标版本号
+ * @returns {Promise}
+ */
+export function rollbackDocumentVersion(id, version) {
+  return request.post(`/documents/${id}/versions/${version}/rollback`)
+}
+
+/**
  * 删除文档（软删除，移至回收站）
  * @param {number} id - 文档 ID
  * @returns {Promise}

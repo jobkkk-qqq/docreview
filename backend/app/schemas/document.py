@@ -22,6 +22,7 @@ class DocumentCreate(BaseModel):
     confidential_level: Optional[str] = Field(None, description="密级")
     effective_date: Optional[date] = Field(None, description="生效日期")
     expiry_date: Optional[date] = Field(None, description="失效日期")
+    parent_doc_id: Optional[int] = Field(None, description="作为某文档的新版本（关联的文档ID），不传则新建独立文档")
 
 
 class DocumentUpdate(BaseModel):
@@ -86,6 +87,8 @@ class DocumentOut(BaseModel):
     file_size: Optional[int] = None
     file_type: Optional[str] = None
     version: int
+    version_group_id: Optional[int] = None
+    version_total: int = 1
     status: str
     confidential_level: Optional[str] = None
     effective_date: Optional[date] = None
@@ -114,6 +117,8 @@ class DocumentListOut(BaseModel):
     file_name: Optional[str] = None
     file_size: Optional[int] = None
     version: int
+    version_group_id: Optional[int] = None
+    version_total: int = 1
     status: str
     category: Optional[CategoryBrief] = None
     department: Optional[DepartmentBrief] = None

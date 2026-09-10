@@ -84,6 +84,10 @@ class Document(Base):
 
     # ── 版本控制 ────────────────────────────────────────────
     version: Mapped[int] = mapped_column(Integer, default=1, comment="版本号")
+    version_group_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True,
+        comment="版本组ID（指向该文档所属版本组的根文档ID；根文档为 NULL）",
+    )
 
     # ── 状态 ────────────────────────────────────────────────
     status: Mapped[str] = mapped_column(String(20), default="draft", comment="文档状态")

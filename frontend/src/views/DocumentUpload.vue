@@ -57,6 +57,53 @@
             </div>
           </el-form-item>
 
+          <!-- 版本关联：作为已有文档的新版本上传 -->
+          <el-form-item label="版本关联">
+            <div style="width:100%">
+              <div style="display:flex;align-items:center;gap:8px">
+                <el-switch v-model="versionEnabled" />
+                <span style="font-size:14px;color:#4e5969">作为已有文档的新版本上传</span>
+                <el-tag
+                  v-if="versionParentLabel"
+                  size="small"
+                  type="primary"
+                  effect="plain"
+                  closable
+                  @close="clearVersionAssociation"
+                >
+                  关联文档：{{ versionParentLabel }}
+                </el-tag>
+              </div>
+              <el-select
+                v-if="versionEnabled"
+                v-model="versionParentId"
+                filterable
+                remote
+                :remote-method="queryDocOptions"
+                :loading="docSearchLoading"
+                placeholder="搜索并选择要关联为父版本的文档"
+                style="width:100%;margin-top:8px"
+                clearable
+                @change="handleParentDocChange"
+              >
+                <el-option
+                  v-for="doc in docSearchOptions"
+                  :key="doc.id"
+                  :label="doc.title"
+                  :value="doc.id"
+                >
+                  <span>{{ doc.title }}</span>
+                  <el-tag v-if="doc.version > 1" size="small" effect="plain" style="margin-left:6px">
+                    v{{ doc.version }}
+                  </el-tag>
+                </el-option>
+              </el-select>
+              <div v-if="versionEnabled" style="font-size:12px;color:#86909c;line-height:22px;margin-top:2px">
+                选择后：新文件将作为该文档的最新版本，继承其分类/部门/文档级别与授权角色
+              </div>
+            </div>
+          </el-form-item>
+
           <!-- 部门（二级分类） -->
           <el-form-item label="所属部门" prop="department_id">
             <el-select v-model="uploadForm.department_id" placeholder="请选择部门（选填）" clearable style="width: 100%">
@@ -117,6 +164,31 @@
                 </div>
               </template>
             </el-upload>
+          </el-form-item>
+
+          <!-- 同名文件提醒 -->
+          <el-form-item v-if="sameNameMatches.length > 0" label="同名提醒">
+            <el-alert type="warning" :closable="false" show-icon style="width:100%">
+              <template #title>
+                检测到 {{ sameNameMatches.length }} 个同名文档，可加入其版本管理
+              </template>
+              <div style="margin-top:6px;display:flex;flex-direction:column;gap:4px">
+                <div
+                  v-for="m in sameNameMatches"
+                  :key="m.id"
+                  style="display:flex;align-items:center;gap:8px;width:100%"
+                >
+                  <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                    {{ m.title }}
+                  </span>
+                  <el-tag size="small" effect="plain" type="info">v{{ m.version }}</el-tag>
+                  <el-button size="small" type="primary" link @click="linkAsVersion(m)">作为新版本</el-button>
+                </div>
+              </div>
+              <div style="font-size:12px;color:#e6a23c;margin-top:4px">
+                若这是该文档的新版本，请点击「作为新版本」；否则将作为独立文档上传。
+              </div>
+            </el-alert>
           </el-form-item>
 
           <!-- 授权角色 -->
@@ -317,16 +389,28 @@
               <el-table :data="batchFileList" size="small" border style="width:100%" max-height="240">
                 <el-table-column type="index" label="#" width="50" />
                 <el-table-column prop="name" label="文件名" show-overflow-tooltip />
-                <el-table-column label="自动标题" width="200">
+                <el-table-column label="自动标题" width="180">
                   <template #default="{ row }">
                     <el-tag size="small" type="info" effect="plain">
                       {{ getAutoTitle(row.name) }}
                     </el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column label="大小" width="100">
+                <el-table-column label="大小" width="90">
                   <template #default="{ row }">
                     {{ formatSize(row.size) }}
+                  </template>
+                </el-table-column>
+                <el-table-column label="版本关联" min-width="180">
+                  <template #default="{ row }">
+                    <template v-if="row.parentDoc">
+                      <el-tag size="small" type="primary" effect="plain" closable @close="clearBatchVersion(row)">
+                        {{ row.parentDoc.title }}
+                      </el-tag>
+                    </template>
+                    <el-button v-else size="small" link type="primary" @click="openBatchVersionPicker(row)">
+                      作为新版本
+                    </el-button>
                   </template>
                 </el-table-column>
               </el-table>
@@ -355,7 +439,45 @@
       </div>
     </el-card>
 
-    <!-- 批量上传结果对话框 -->
+    <!-- 批量版本关联选择器 -->
+    <el-dialog
+      v-model="batchVersionPickerVisible"
+      title="选择父文档（作为其新版本上传）"
+      width="520px"
+      :close-on-click-modal="false"
+    >
+      <div v-if="batchVersionTarget" style="margin-bottom:10px;font-size:13px;color:#86909c">
+        当前文件：<strong>{{ batchVersionTarget.name }}</strong>
+      </div>
+      <el-select
+        v-model="batchVersionParentId"
+        filterable
+        remote
+        :remote-method="queryBatchDocOptions"
+        :loading="docSearchLoading"
+        placeholder="搜索并选择要关联的父文档"
+        style="width:100%"
+        clearable
+      >
+        <el-option
+          v-for="doc in docSearchOptions"
+          :key="doc.id"
+          :label="doc.title"
+          :value="doc.id"
+        >
+          <span>{{ doc.title }}</span>
+          <el-tag v-if="doc.version > 1" size="small" effect="plain" style="margin-left:6px">v{{ doc.version }}</el-tag>
+        </el-option>
+      </el-select>
+      <div v-if="batchVersionParentId" style="font-size:12px;color:#86909c;line-height:22px;margin-top:4px">
+        新文件将作为选定文档的最新版本，继承其分类/部门/文档级别与授权角色。
+      </div>
+      <template #footer>
+        <el-button @click="batchVersionPickerVisible = false">取消</el-button>
+        <el-button type="primary" :disabled="!batchVersionParentId" @click="confirmBatchVersion">确认关联</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 批量上传结果对话框 -->
     <el-dialog
       v-model="batchResultVisible"
@@ -435,7 +557,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { UploadFilled, WarningFilled } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth.js'
-import { uploadDocument, batchUploadDocuments, getDocLevels } from '../api/document.js'
+import { uploadDocument, batchUploadDocuments, getDocLevels, checkSameName, getDocumentList } from '../api/document.js'
 import { getCategoryListSimple } from '../api/category.js'
 import { getDepartmentSimple } from '../api/department.js'
 import { getRoleListSimple } from '../api/role.js'
@@ -451,6 +573,68 @@ const docLevels = ref(['无级别'])
 const roleOptions = ref([])
 const roleMap = ref({})
 const submitting = ref(false)
+
+// ========== 版本关联 / 同名提醒 ==========
+const versionEnabled = ref(false)
+const versionParentId = ref(null)
+const versionParentLabel = ref('')
+const docSearchOptions = ref([])
+const docSearchLoading = ref(false)
+const sameNameMatches = ref([])
+
+async function checkSameNameForFile(name) {
+  sameNameMatches.value = []
+  if (!name) return
+  try {
+    const res = await checkSameName(name)
+    sameNameMatches.value = (res && res.items) || []
+  } catch {
+    sameNameMatches.value = []
+  }
+}
+
+function linkAsVersion(m) {
+  versionEnabled.value = true
+  versionParentId.value = m.id
+  versionParentLabel.value = m.title
+  sameNameMatches.value = []
+  ElMessage.success(`已关联：将作为「${m.title}」的新版本上传`)
+}
+
+function handleParentDocChange(val) {
+  const d = docSearchOptions.value.find(x => x.id === val)
+  versionParentLabel.value = d ? d.title : ''
+  if (!val) versionParentLabel.value = ''
+}
+
+async function queryDocOptions(keyword) {
+  if (!keyword) {
+    docSearchOptions.value = []
+    return
+  }
+  docSearchLoading.value = true
+  try {
+    const res = await getDocumentList({ keyword, page_size: 20, page: 1 })
+    const items = (res && (res.items || (res.data && res.data.items))) || []
+    const opts = items.map(i => ({ id: i.id, title: i.title, version: i.version || 1 }))
+    const ids = new Set(opts.map(x => x.id))
+    for (const m of sameNameMatches.value) {
+      if (!ids.has(m.id)) opts.push({ id: m.id, title: m.title, version: m.version || 1 })
+    }
+    docSearchOptions.value = opts
+  } catch {
+    docSearchOptions.value = []
+  } finally {
+    docSearchLoading.value = false
+  }
+}
+
+function clearVersionAssociation() {
+  versionEnabled.value = false
+  versionParentId.value = null
+  versionParentLabel.value = ''
+  sameNameMatches.value = []
+}
 
 // ========== 重复文件检测 ==========
 const duplicateDialogVisible = ref(false)
@@ -525,6 +709,7 @@ function handleFileChange(file) {
     const name = file.name.substring(0, file.name.lastIndexOf('.')) || file.name
     uploadForm.title = name
   }
+  checkSameNameForFile(file.name)
 }
 
 function handleFileRemove() {
@@ -568,6 +753,9 @@ async function handleSingleSubmit() {
       if (uploadForm.role_ids.length > 0) {
         formData.append('role_ids', uploadForm.role_ids.join(','))
       }
+      if (versionEnabled.value && versionParentId.value) {
+        formData.append('parent_doc_id', versionParentId.value)
+      }
       await uploadDocument(formData)
       ElMessage.success('文档上传成功')
       router.push('/documents')
@@ -600,6 +788,7 @@ function handleSingleReset() {
   uploadForm.summary = ''
   uploadForm.file = null
   uploadForm.role_ids = []
+  clearVersionAssociation()
   if (uploadRef.value) uploadRef.value.clearFiles()
   if (isBusinessUser.value) {
     const recommended = categoryOptions.value.find(item => isRecommendedCategory(item))
@@ -658,6 +847,38 @@ function handleBatchRemoveRole(rid) {
   batchForm.role_ids = batchForm.role_ids.filter(id => id !== rid)
 }
 
+// ========== 批量版本关联（逐文件） ==========
+const batchVersionPickerVisible = ref(false)
+const batchVersionTarget = ref(null)
+const batchVersionParentId = ref(null)
+
+function openBatchVersionPicker(row) {
+  batchVersionTarget.value = row
+  batchVersionParentId.value = row.parentDoc ? row.parentDoc.id : null
+  docSearchOptions.value = []
+  batchVersionPickerVisible.value = true
+}
+
+async function queryBatchDocOptions(keyword) {
+  await queryDocOptions(keyword)
+}
+
+function confirmBatchVersion() {
+  if (!batchVersionTarget.value || !batchVersionParentId.value) return
+  const d = docSearchOptions.value.find(x => x.id === batchVersionParentId.value)
+  batchVersionTarget.value.parentDoc = {
+    id: batchVersionParentId.value,
+    title: d ? d.title : `#${batchVersionParentId.value}`,
+  }
+  batchVersionPickerVisible.value = false
+  batchVersionTarget.value = null
+  batchVersionParentId.value = null
+}
+
+function clearBatchVersion(row) {
+  row.parentDoc = null
+}
+
 async function handleBatchSubmit() {
   if (!batchFormRef.value) return
   await batchFormRef.value.validate(async (valid) => {
@@ -681,6 +902,10 @@ async function handleBatchSubmit() {
       if (batchForm.summary) formData.append('summary', batchForm.summary)
       if (batchForm.role_ids.length > 0) {
         formData.append('role_ids', batchForm.role_ids.join(','))
+      }
+      // 逐文件版本关联：按文件列表顺序逗号分隔父文档ID，无关联的文件用空占位
+      if (batchFileList.value.some(f => f.parentDoc && f.parentDoc.id)) {
+        formData.append('parent_doc_ids', batchFileList.value.map(f => (f.parentDoc && f.parentDoc.id) ? f.parentDoc.id : '').join(','))
       }
 
       const result = await batchUploadDocuments(formData)
