@@ -104,6 +104,7 @@ async def save_role_permissions(
 @router.get("/matrix", summary="获取权限矩阵数据")
 async def get_permission_matrix(
     role_id: int | None = Query(None, description="角色 ID，不传则只返回角色列表"),
+    keyword: str | None = Query(None, description="文档搜索关键词（标题/编号/文件名），用于定位文档"),
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(get_current_user),
 ):
@@ -123,7 +124,7 @@ async def get_permission_matrix(
     if role is None:
         raise HTTPException(status_code=404, detail="角色不存在")
 
-    categories = await permission_service.get_documents_for_role_matrix(session, role_id)
+    categories = await permission_service.get_documents_for_role_matrix(session, role_id, keyword=keyword)
     return {
         "roles": roles,
         "role": {"id": role.id, "name": role.name, "code": role.code},
@@ -294,12 +295,7 @@ async def get_category_permissions(
     current_user: User = Depends(require_permission("manage_doc_permissions")),
 ):
     perms = await permission_service.get_category_permissions(session, category_id)
-    items = []
-    for p in perms:
-        d = CatPermissionOut.model_validate(p)
-        d.category_name = p.category.name if p.category else None
-        items.append(d)
-    return items
+    return [CatPermissionOut.model_validate(p) for p in perms]
 
 
 @router.post("/categories", summary="授予分类权限")

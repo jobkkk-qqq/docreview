@@ -81,11 +81,27 @@
             <span v-else style="color:#86909c">-</span>
           </template>
         </el-table-column>
+        <el-table-column label="默认授权角色" min-width="150">
+          <template #default="{ row }">
+            <template v-if="row.default_role_ids && row.default_role_ids.length">
+              <el-tag
+                v-for="rid in row.default_role_ids"
+                :key="rid"
+                size="small"
+                type="warning"
+                effect="plain"
+                style="margin-right:4px"
+              >{{ roleName(rid) }}</el-tag>
+            </template>
+            <span v-else style="color:#86909c">-</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="doc_count" label="文档数量" width="100" />
         <el-table-column prop="sort_order" label="排序" width="80" />
         <el-table-column prop="created_at" label="创建时间" width="170" />
-        <el-table-column label="操作" width="160" fixed="right">
+        <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
+            <el-button type="primary" link size="small" @click="openPerm(row)">权限</el-button>
             <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
             <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
           </template>
@@ -145,6 +161,21 @@
             与角色业务范围一致时，该角色用户才能上传到此分类
           </div>
         </el-form-item>
+        <el-form-item label="默认授权角色" prop="default_role_ids">
+          <el-select
+            v-model="formData.default_role_ids"
+            multiple
+            collapse-tags
+            collapse-tags-tooltip
+            placeholder="不选则仅上传时手动授权的角色可见"
+            style="width: 100%"
+          >
+            <el-option v-for="r in roleOptions" :key="r.id" :label="r.name" :value="r.id" />
+          </el-select>
+          <div style="margin-top:4px;font-size:12px;color:#86909c">
+            上传到该分类的新文档将自动授予这些角色 查看+下载 权限；单个文档可在权限矩阵中单独调整
+          </div>
+        </el-form-item>
         <el-form-item label="全员可见" prop="is_public">
           <el-switch
             v-model="formData.is_public"
@@ -164,6 +195,76 @@
         <el-button type="primary" :loading="submitting" @click="handleSubmit">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- 分类权限管理对话框 -->
+    <el-dialog
+      v-model="permDialogVisible"
+      :title="permDialogTitle"
+      width="640px"
+      destroy-on-close
+      @closed="resetPermForm"
+    >
+      <div class="perm-desc">
+        授权后，所授角色/用户可查看或编辑该分类下的全部文档（查看包含下载），适用于现存及新上传文档。
+      </div>
+
+      <!-- 新增授权 -->
+      <el-form :inline="true" class="perm-grant-form">
+        <el-form-item label="角色">
+          <el-select v-model="grantRoleId" placeholder="选择角色" clearable filterable style="width: 160px">
+            <el-option v-for="r in roleOptions" :key="r.id" :label="r.name" :value="r.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="用户">
+          <el-select
+            v-model="grantUserId"
+            placeholder="搜索用户"
+            clearable
+            filterable
+            remote
+            :remote-method="searchUsers"
+            :loading="usersLoading"
+            style="width: 160px"
+          >
+            <el-option v-for="u in userOptions" :key="u.id" :label="u.display_name || u.username" :value="u.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="权限">
+          <el-checkbox v-model="grantCanView">查看</el-checkbox>
+          <el-checkbox v-model="grantCanEdit">编辑</el-checkbox>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" :loading="permSubmitting" @click="addCategoryPerm">添加授权</el-button>
+        </el-form-item>
+      </el-form>
+
+      <!-- 授权列表 -->
+      <el-table :data="catPerms" v-loading="permLoading" size="small" border>
+        <el-table-column label="授权对象" min-width="160">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.role_id ? 'primary' : 'info'" effect="plain">
+              {{ row.role_id ? '角色' : '用户' }}
+            </el-tag>
+            <span style="margin-left:6px">{{ row.role_name || row.user_name || `ID:${row.role_id || row.user_id}` }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="查看" width="70" align="center">
+          <template #default="{ row }">
+            <el-switch v-model="row.can_view" @change="(v) => togglePerm(row, 'can_view', v)" />
+          </template>
+        </el-table-column>
+        <el-table-column label="编辑" width="70" align="center">
+          <template #default="{ row }">
+            <el-switch v-model="row.can_edit" @change="(v) => togglePerm(row, 'can_edit', v)" />
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="80" align="center">
+          <template #default="{ row }">
+            <el-button type="danger" link size="small" @click="removeCategoryPerm(row)">撤销</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
   </div>
 </template>
 
@@ -177,7 +278,14 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { getCategoryList, createCategory, updateCategory, deleteCategory } from '../api/category.js'
 import { getDepartmentSimple } from '../api/department.js'
-import { getDocLevels } from '../api/document.js'
+import {
+  getDocLevels,
+  getCategoryPermissions,
+  grantCategoryPermission,
+  revokeCategoryPermission
+} from '../api/document.js'
+import { getRoleListSimple } from '../api/role.js'
+import { getUserList } from '../api/user.js'
 
 // 加载状态
 const loading = ref(false)
@@ -187,6 +295,11 @@ const structureLoading = ref(false)
 // 三级分类结构数据
 const departmentOptions = ref([])
 const docLevels = ref(['无级别'])
+
+// 角色选项（默认授权角色多选）
+const roleOptions = ref([])
+const roleMap = ref({})
+const roleName = (rid) => roleMap.value[rid] || `角色${rid}`
 
 // 分类列表
 const categoryList = ref([])
@@ -211,6 +324,7 @@ const formData = reactive({
   description: '',
   business_type: '',
   is_public: false,
+  default_role_ids: [],
   sort_order: 0
 })
 
@@ -250,6 +364,7 @@ function handleAdd() {
   formData.description = ''
   formData.business_type = ''
   formData.is_public = false
+  formData.default_role_ids = []
   formData.sort_order = 0
   dialogVisible.value = true
 }
@@ -263,6 +378,7 @@ function handleEdit(row) {
   formData.description = row.description || ''
   formData.business_type = row.business_type || ''
   formData.is_public = row.is_public || false
+  formData.default_role_ids = Array.isArray(row.default_role_ids) ? [...row.default_role_ids] : []
   formData.sort_order = row.sort_order || 0
   dialogVisible.value = true
 }
@@ -281,7 +397,8 @@ async function handleSubmit() {
         description: formData.description,
         business_type: (formData.business_type || '').trim() || null,
         is_public: formData.is_public,
-        sort_order: formData.sort_order
+        sort_order: formData.sort_order,
+        default_role_ids: formData.default_role_ids
       }
       if (editingId.value) {
         await updateCategory(editingId.value, data)
@@ -352,9 +469,135 @@ async function fetchStructure() {
   structureLoading.value = false
 }
 
+/**
+ * 加载角色选项（默认授权角色多选）
+ */
+async function fetchRoles() {
+  try {
+    const roles = await getRoleListSimple()
+    roleOptions.value = roles || []
+    for (const r of roleOptions.value) {
+      roleMap.value[r.id] = r.name
+    }
+  } catch { /* ignore */ }
+}
+
+// ── 分类权限管理 ────────────────────────────────────────
+const permDialogVisible = ref(false)
+const permCategory = ref(null)
+const permLoading = ref(false)
+const permSubmitting = ref(false)
+const catPerms = ref([])
+const grantRoleId = ref(null)
+const grantUserId = ref(null)
+const grantCanView = ref(true)
+const grantCanEdit = ref(false)
+const userOptions = ref([])
+const usersLoading = ref(false)
+
+const permDialogTitle = computed(() =>
+  permCategory.value ? `分类权限 - ${permCategory.value.name}` : '分类权限'
+)
+
+function resetPermForm() {
+  grantRoleId.value = null
+  grantUserId.value = null
+  grantCanView.value = true
+  grantCanEdit.value = false
+  userOptions.value = []
+}
+
+function openPerm(row) {
+  permCategory.value = row
+  resetPermForm()
+  permDialogVisible.value = true
+  loadCatPerms()
+}
+
+async function loadCatPerms() {
+  if (!permCategory.value) return
+  permLoading.value = true
+  try {
+    const res = await getCategoryPermissions(permCategory.value.id)
+    catPerms.value = Array.isArray(res) ? res : []
+  } catch { /* 错误已在拦截器处理 */ } finally {
+    permLoading.value = false
+  }
+}
+
+async function searchUsers(keyword) {
+  if (!keyword) return
+  usersLoading.value = true
+  try {
+    const res = await getUserList({ keyword, page_size: 20 })
+    userOptions.value = res.items || res.data || []
+  } catch { /* ignore */ } finally {
+    usersLoading.value = false
+  }
+}
+
+async function addCategoryPerm() {
+  if (!grantRoleId.value && !grantUserId.value) {
+    ElMessage.warning('请选择要授权的角色或用户')
+    return
+  }
+  if (!grantCanView.value && !grantCanEdit.value) {
+    ElMessage.warning('请至少勾选查看或编辑权限')
+    return
+  }
+  permSubmitting.value = true
+  try {
+    await grantCategoryPermission({
+      category_id: permCategory.value.id,
+      role_id: grantRoleId.value || null,
+      user_id: grantUserId.value || null,
+      can_view: grantCanView.value,
+      can_edit: grantCanEdit.value
+    })
+    ElMessage.success('授权成功')
+    resetPermForm()
+    loadCatPerms()
+  } catch { /* 错误已在拦截器处理 */ } finally {
+    permSubmitting.value = false
+  }
+}
+
+async function togglePerm(perm, field, value) {
+  if (!value && !perm.can_view && !perm.can_edit) {
+    ElMessage.warning('至少保留查看或编辑权限，如需取消请点重置')
+    return
+  }
+  try {
+    await grantCategoryPermission({
+      category_id: perm.category_id,
+      role_id: perm.role_id || null,
+      user_id: perm.user_id || null,
+      can_view: perm.can_view,
+      can_edit: perm.can_edit
+    })
+    ElMessage.success('权限已更新')
+  } catch {
+    perm[field] = !value
+  }
+}
+
+async function removeCategoryPerm(perm) {
+  try {
+    await ElMessageBox.confirm('确定撤销该对象在此分类下的权限吗？', '撤销确认', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+    await revokeCategoryPermission(perm.id)
+    ElMessage.success('权限已撤销')
+    loadCatPerms()
+  } catch { /* 用户取消或错误 */ }
+}
+
 onMounted(() => {
   fetchList()
   fetchStructure()
+  fetchRoles()
 })
 </script>
 
@@ -363,6 +606,17 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.perm-desc {
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: #86909c;
+  line-height: 1.6;
+}
+
+.perm-grant-form {
+  margin-bottom: 12px;
 }
 
 .structure-title {

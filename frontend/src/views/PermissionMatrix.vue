@@ -107,6 +107,15 @@
             <div class="panel-header">
               <div class="panel-tips">
                 <span>共 {{ totalDocCount }} 个文档，{{ selectedDocCount }} 个已授权</span>
+                <el-input
+                  v-model="docKeyword"
+                  placeholder="搜索标题/编号/文件名定位文档"
+                  clearable
+                  size="small"
+                  style="width:240px;margin-left:12px"
+                  @keyup.enter="loadDocPermissions"
+                  @clear="loadDocPermissions"
+                />
               </div>
               <el-button type="primary" :loading="docSaving" :icon="Plus" @click="handleSaveDocPermissions">
                 保存文档权限
@@ -242,6 +251,8 @@ import {
 const loading = ref(false)
 const menuSaving = ref(false)
 const docSaving = ref(false)
+// 文档权限搜索关键词（标题/编号/文件名，用于文档量大时定位）
+const docKeyword = ref('')
 
 // 用户权限判断（控制 Tab 可见性）
 const canManageMenuPerms = computed(() => hasPermission('manage_menu_permissions') || hasPermission('manage_system'))
@@ -425,7 +436,8 @@ function toggleCat(cat) {
 async function loadDocPermissions() {
   loading.value = true
   try {
-    const data = await getPermissionMatrix(selectedRoleId.value)
+    const kw = (docKeyword.value || '').trim()
+    const data = await getPermissionMatrix(selectedRoleId.value, kw || undefined)
     roles.value = data.roles || roles.value
     categories.value = (data.categories || []).map(cat => ({ ...cat, expanded: true }))
 

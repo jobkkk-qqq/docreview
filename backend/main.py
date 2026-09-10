@@ -40,6 +40,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from app.core.auto_migrate import auto_migrate
     await auto_migrate(engine)
 
+    # 同步菜单功能权限树到数据库（幂等）：新增权限码自动入库、
+    # 已删除的码标记废弃，角色管理/权限矩阵界面才能勾选新权限
+    from app.database import async_session_factory
+    from app.services.menu_function_tree import sync_permissions_to_db
+    async with async_session_factory() as session:
+        await sync_permissions_to_db(session)
+        await session.commit()
+
     # 注册数据库配置加载器
     async def load_db_config():
         from app.database import async_session_factory

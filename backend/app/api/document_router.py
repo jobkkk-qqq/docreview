@@ -22,7 +22,13 @@ from app.models.user import User
 from app.models.category import Category
 from app.models.department import Department
 from app.services import doc_service
-from app.services.permission_service import can_user_download_document, get_user_business_scopes
+from app.services.permission_service import (
+    can_user_download_document,
+    can_user_edit_document,
+    can_user_print_document,
+    can_user_view_document,
+    get_user_business_scopes,
+)
 from app.core.doc_levels import DOC_LEVELS, is_valid_doc_level
 from app.schemas.document import DocumentCreate, DocumentUpdate, DocumentReview, DocumentOut, DocumentListOut, DeletedDocumentOut, CategoryDocGroup
 from app.schemas.user import PaginatedResponse
@@ -46,8 +52,9 @@ def _get_inline_mimetype(filename: str) -> str:
 
 
 def _needs_watermark(document) -> bool:
-    """判断文档是否需要添加水印（非公开文档需要水印）"""
-    return document.confidential_level and document.confidential_level != "public"
+    """判断文档是否需要添加水印：非 public 密级均需水印，密级未填写按 internal 处理"""
+    level = (document.confidential_level or "").strip()
+    return level != "public"
 
 
 async def _validate_dept_and_level(
@@ -80,7 +87,7 @@ async def upload_document(
     category_id: int = Form(None, description="分类ID（一级分类）"),
     department_id: int = Form(None, description="部门ID（二级分类）"),
     doc_level: str = Form(None, description="文档级别（三级分类），不传默认为无级别"),
-    confidential_level: str = Form(None, description="密级"),
+    confidential_level: str = Form("internal", description="密级（默认 internal，公开文档请选 public）"),
     role_ids: str = Form(None, description="授权角色ID列表（逗号分隔，如 1,2,3）"),
     file: UploadFile = File(..., description="文件"),
     session: AsyncSession = Depends(get_async_session),
@@ -319,7 +326,11 @@ async def get_document(
     document = await doc_service.get_document_by_id(session, doc_id)
     if document is None:
         raise HTTPException(status_code=404, detail="文档不存在")
+    # 可见性校验：无权文档返回 404，避免按 ID 遍历探测
+    if not can_user_view_document(current_user, document):
+        raise HTTPException(status_code=404, detail="文档不存在")
     document.can_download = can_user_download_document(current_user, document)
+    document.can_print = can_user_print_document(current_user, document)
     document.has_pdf = bool(document.pdf_path)
     return DocumentOut.model_validate(document)
 
@@ -333,27 +344,17 @@ async def update_document(
     current_user: User = Depends(get_current_user),
 ):
     """更新文档元信息"""
-    # 权限校验
-    from app.services.permission_service import can_user_edit_document
-    from app.models.document import CategoryPermission
-    from sqlalchemy import select
-
     document = await doc_service.get_document_by_id(session, doc_id)
     if document is None:
         raise HTTPException(status_code=404, detail="文档不存在")
+    if not can_user_view_document(current_user, document):
+        raise HTTPException(status_code=404, detail="文档不存在")
     if not can_user_edit_document(current_user, document):
-        # 检查是否有分类级编辑权限
-        if document.category_id:
-            cp_stmt = select(CategoryPermission).where(
-                CategoryPermission.user_id == current_user.id,
-                CategoryPermission.category_id == document.category_id,
-                CategoryPermission.can_edit == True,
-            )
-            cp_result = await session.execute(cp_stmt)
-            if not cp_result.scalar_one_or_none():
-                raise HTTPException(status_code=403, detail="无权编辑此文档")
-        else:
-            raise HTTPException(status_code=403, detail="无权编辑此文档")
+        raise HTTPException(status_code=403, detail="无权编辑此文档")
+
+    # 文档状态只能通过审核接口流转，编辑接口仅系统管理员可改 status
+    if doc_data.status is not None and not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="文档状态不允许通过编辑修改，请使用审核操作")
 
     ip_address = get_client_ip(request)
     # 校验部门与文档级别（三级分类）若提交了相关字段
@@ -373,7 +374,15 @@ async def review_document(
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(get_current_user),
 ):
-    """审核文档（通过/驳回）"""
+    """审核文档（通过/驳回），需要 review_doc 权限"""
+    document = await doc_service.get_document_by_id(session, doc_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    if not can_user_view_document(current_user, document):
+        raise HTTPException(status_code=404, detail="文档不存在")
+    from app.core.permissions import has_permission
+    if not current_user.is_superuser and not has_permission(current_user, "review_doc"):
+        raise HTTPException(status_code=403, detail="没有审核文档的权限")
     ip_address = get_client_ip(request)
     document = await doc_service.review_document(session, doc_id, current_user, review_data, ip_address)
     return DocumentOut.model_validate(document)
@@ -387,6 +396,12 @@ async def delete_document(
     current_user: User = Depends(require_permission("delete_doc")),
 ):
     """删除文档（软删除：将文件移至 draft 目录，标记为已删除）"""
+    document = await doc_service.get_document_by_id(session, doc_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    # 删除权限需同时满足：拥有 delete_doc 功能码 + 可见该文档（看不见的不能删）
+    if not can_user_view_document(current_user, document):
+        raise HTTPException(status_code=404, detail="文档不存在")
     ip_address = get_client_ip(request)
     await doc_service.delete_document(session, doc_id, current_user.id, ip_address)
     return {"detail": "文档已删除"}
@@ -414,7 +429,14 @@ async def report_print_log(
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(get_current_user),
 ):
-    """记录文档打印操作到审计日志"""
+    """记录文档打印操作到审计日志（需 print_doc 权限 + 文档级打印授权）"""
+    document = await doc_service.get_document_by_id(session, doc_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    if not can_user_view_document(current_user, document):
+        raise HTTPException(status_code=404, detail="文档不存在")
+    if not can_user_print_document(current_user, document):
+        raise HTTPException(status_code=403, detail="没有打印该文档的权限")
     ip_address = get_client_ip(request)
     from app.models.audit_log import AuditLog
     log = AuditLog(

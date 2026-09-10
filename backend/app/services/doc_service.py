@@ -33,6 +33,12 @@ async def _safe_unlink(path: Path, retries: int = 3, delay: float = 1.0) -> bool
     return False
 
 
+def _is_document_expired(doc: Document) -> bool:
+    """文档是否已过失效日期（仅标记提示，不拦截访问——档案系统允许查阅历史文档）"""
+    from datetime import date as _date
+    return doc.expiry_date is not None and doc.expiry_date < _date.today()
+
+
 async def _auto_mark_missing_files(
     session: AsyncSession,
     documents: list[Document],
@@ -295,9 +301,9 @@ async def upload_document(
         {"title": doc_data.title, "file_name": file_name},
     )
 
-    # 文档权限：仅授予上传者显式选择的授权角色
-    # 不再自动添加上传者拥有的角色（如业务角色），也不自动继承同分类权限，
-    # 权限完全由管理员/上传者在“授权角色”中自由设定
+    # 文档权限：授予 上传者显式选择的授权角色 + 分类默认授权角色
+    # 上传者未选择时，分类配置的默认角色（如「合同文件→财务人员」）依然自动获得查看/下载权限；
+    # 显式选择与默认角色取并集且去重，默认角色跳过已存在记录，不会覆盖上传者的显式配置
     from app.models.document import DocumentPermission
 
     granted_role_ids = set(role_ids) if role_ids else set()
@@ -315,6 +321,15 @@ async def upload_document(
 
     if granted_role_ids:
         await session.flush()
+
+    # 分类默认授权角色自动授权（显式已授权的角色自动跳过）
+    auto_role_ids = await _grant_category_default_roles(session, document, uploader.id)
+
+    if auto_role_ids:
+        await _create_audit_log(
+            session, uploader.id, "auto_grant_by_category_default", "document", document.id, ip_address,
+            {"title": doc_data.title, "category_id": document.category_id, "auto_granted_role_ids": auto_role_ids},
+        )
 
     return document
 
@@ -356,7 +371,7 @@ async def list_documents(
     current_user: User | None = None,
 ) -> tuple[list[Document], int]:
     """分页查询文档列表。"""
-    from app.services.permission_service import get_document_visibility_filter, can_user_download_document
+    from app.services.permission_service import get_document_visibility_filter, can_user_download_document, can_user_print_document, can_user_print_document
     from app.models.category import Category
 
     stmt = (
@@ -422,14 +437,18 @@ async def list_documents(
     # 过滤掉已标记删除的文档（与 list_documents_grouped 保持一致）
     valid_documents = [d for d in documents if not d.is_deleted]
 
-    # 为每个文档计算当前用户的下载权限和是否有PDF预览
+    # 为每个文档计算当前用户的下载/打印权限、过期标记和是否有PDF预览
     if current_user:
         for doc in valid_documents:
             doc.can_download = can_user_download_document(current_user, doc)
+            doc.can_print = can_user_print_document(current_user, doc)
+            doc.is_expired = _is_document_expired(doc)
             doc.has_pdf = bool(doc.pdf_path)
     else:
         for doc in valid_documents:
             doc.can_download = False
+            doc.can_print = False
+            doc.is_expired = _is_document_expired(doc)
             doc.has_pdf = bool(doc.pdf_path)
 
     return valid_documents, total
@@ -455,7 +474,7 @@ async def list_documents_grouped(
         ...
     ]
     """
-    from app.services.permission_service import get_document_visibility_filter, can_user_download_document
+    from app.services.permission_service import get_document_visibility_filter, can_user_download_document, can_user_print_document
 
     # 构建基础过滤条件（默认排除已删除文档）
     base_conditions = [Document.is_deleted == False]
@@ -528,10 +547,13 @@ async def list_documents_grouped(
             if doc.is_deleted:
                 continue
             doc.has_pdf = bool(doc.pdf_path)
+            doc.is_expired = _is_document_expired(doc)
             if current_user:
                 doc.can_download = can_user_download_document(current_user, doc)
+                doc.can_print = can_user_print_document(current_user, doc)
             else:
                 doc.can_download = False
+                doc.can_print = False
             valid_docs.append(doc)
 
         groups.append({
@@ -575,10 +597,13 @@ async def list_documents_grouped(
                 if doc.is_deleted:
                     continue
                 doc.has_pdf = bool(doc.pdf_path)
+                doc.is_expired = _is_document_expired(doc)
                 if current_user:
                     doc.can_download = can_user_download_document(current_user, doc)
+                    doc.can_print = can_user_print_document(current_user, doc)
                 else:
                     doc.can_download = False
+                    doc.can_print = False
                 valid_uncat.append(doc)
 
             groups.append({
@@ -974,69 +999,52 @@ async def _create_audit_log(
     session.add(log)
 
 
-async def _inherit_category_role_permissions(
+async def _grant_category_default_roles(
     session: AsyncSession,
     document: Document,
     granted_by: int,
-) -> None:
-    """分类权限继承：查询同分类下已有文档的角色权限，取最大权限自动授予新文档。"""
+) -> list[int]:
+    """分类默认授权角色：为文档创建分类配置的默认角色权限记录（查看+下载）。
+
+    依据 category_default_roles 配置（如「合同文件 → 财务人员」），
+    上传到该分类的文档自动授予默认角色 can_view/can_download，
+    已有该角色权限记录（上传者显式选择）时跳过，不覆盖显式配置。
+    返回实际自动授权的角色ID列表。
+    """
     from app.models.document import DocumentPermission
+    from app.models.category import CategoryDefaultRole
 
     if not document.category_id:
-        return
+        return []
 
-    # 查询同分类下所有文档的角色权限
-    stmt = (
-        select(DocumentPermission)
-        .join(Document, DocumentPermission.document_id == Document.id)
-        .where(
-            Document.category_id == document.category_id,
-            DocumentPermission.role_id.isnot(None),
-        )
+    stmt = select(CategoryDefaultRole.role_id).where(
+        CategoryDefaultRole.category_id == document.category_id
     )
-    result = await session.execute(stmt)
-    existing_perms = list(result.scalars().all())
+    rows = (await session.execute(stmt)).all()
+    default_role_ids = [r[0] for r in rows]
+    if not default_role_ids:
+        return []
 
-    if not existing_perms:
-        return
-
-    # 按 role_id 聚合，取每个角色的最大权限
-    role_max_perms: dict[int, dict[str, bool]] = {}
-    for p in existing_perms:
-        rid = p.role_id
-        if rid not in role_max_perms:
-            role_max_perms[rid] = {
-                "can_view": False,
-                "can_download": False,
-                "can_edit": False,
-                "can_print": False,
-            }
-        rp = role_max_perms[rid]
-        rp["can_view"] = rp["can_view"] or p.can_view
-        rp["can_download"] = rp["can_download"] or p.can_download
-        rp["can_edit"] = rp["can_edit"] or p.can_edit
-        rp["can_print"] = rp["can_print"] or p.can_print
-
-    # 为新文档创建继承的权限记录（跳过已存在的）
-    for rid, perms in role_max_perms.items():
-        # 检查是否已有该角色的权限记录
-        check_stmt = select(DocumentPermission).where(
+    auto_granted: list[int] = []
+    for rid in default_role_ids:
+        check_stmt = select(DocumentPermission.id).where(
             DocumentPermission.document_id == document.id,
             DocumentPermission.role_id == rid,
         )
-        check_result = await session.execute(check_stmt)
-        if check_result.scalar_one_or_none() is not None:
+        if (await session.execute(check_stmt)).scalar_one_or_none() is not None:
             continue
-
         perm = DocumentPermission(
             document_id=document.id,
             role_id=rid,
-            can_view=perms["can_view"],
-            can_download=perms["can_download"],
-            can_edit=perms["can_edit"],
-            can_print=perms["can_print"],
+            can_view=True,
+            can_download=True,
+            can_edit=False,
+            can_print=False,
             granted_by=granted_by,
         )
         session.add(perm)
+        auto_granted.append(rid)
 
-    await session.flush()
+    if auto_granted:
+        await session.flush()
+    return auto_granted

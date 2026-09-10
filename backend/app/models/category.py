@@ -3,11 +3,12 @@
 
 对应数据库表：
 - categories: id SERIAL PK, name, code, description, folder_path, sort_order, is_active, created_at
+- category_default_roles: 分类默认授权角色（上传到该分类的文档自动授予这些角色查看/下载权限）
 """
 
 from datetime import datetime
 
-from sqlalchemy import String, Boolean, DateTime, Integer, func
+from sqlalchemy import String, Boolean, DateTime, ForeignKey, Integer, Index, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -57,6 +58,52 @@ class Category(Base):
         back_populates="category",
         lazy="noload",
     )
+    default_roles: Mapped[list["Role"]] = relationship(  # noqa: F821
+        "Role",
+        secondary="category_default_roles",
+        lazy="noload",
+        viewonly=True,
+    )
 
     def __repr__(self) -> str:
         return f"<Category id={self.id} name={self.name}>"
+
+
+class CategoryDefaultRole(Base):
+    """分类默认授权角色：上传到该分类的文档自动授予这些角色 查看+下载 权限"""
+
+    __tablename__ = "category_default_roles"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+    )
+    category_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("categories.id", ondelete="CASCADE"),
+        comment="分类ID",
+    )
+    role_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("roles.id", ondelete="CASCADE"),
+        comment="角色ID",
+    )
+    created_by: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        comment="配置人ID",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        comment="创建时间",
+    )
+
+    def __repr__(self) -> str:
+        return f"<CategoryDefaultRole category={self.category_id} role={self.role_id}>"
+
+    __table_args__ = (
+        Index("ix_cat_default_role_category_id", "category_id"),
+        Index("ix_cat_default_role_role_id", "role_id"),
+    )

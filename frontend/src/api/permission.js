@@ -33,10 +33,13 @@ export function saveRoleMenuPermissions(data) {
 /**
  * 获取权限矩阵数据（按角色）
  * @param {number} roleId - 角色 ID
+ * @param {string} [keyword] - 文档搜索关键词（标题/编号/文件名）
  * @returns {Promise}
  */
-export function getPermissionMatrix(roleId) {
-  return request.get('/permissions/matrix', { params: { role_id: roleId } })
+export function getPermissionMatrix(roleId, keyword) {
+  return request.get('/permissions/matrix', {
+    params: { role_id: roleId, ...(keyword ? { keyword } : {}) }
+  })
 }
 
 /**

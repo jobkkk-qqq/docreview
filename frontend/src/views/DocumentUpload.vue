@@ -146,7 +146,18 @@
                   （上传后这些角色自动获得查看+下载权限）
                 </span>
               </div>
-              <div v-else style="font-size:12px;color:#c9cdd4;line-height:24px">
+              <div v-if="autoGrantRoleNames(uploadForm.category_id).length" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">
+                <el-tag
+                  v-for="name in autoGrantRoleNames(uploadForm.category_id)"
+                  :key="name"
+                  type="warning"
+                  effect="plain"
+                >{{ name }}</el-tag>
+                <span style="font-size:12px;color:#86909c;line-height:28px">
+                  （分类默认授权角色，将自动获得查看+下载权限）
+                </span>
+              </div>
+              <div v-if="uploadForm.role_ids.length === 0 && autoGrantRoleNames(uploadForm.category_id).length === 0" style="font-size:12px;color:#c9cdd4;line-height:24px">
                 不选择则默认仅上传者和管理员可见
               </div>
             </div>
@@ -258,7 +269,18 @@
                   （所有文件上传后这些角色自动获得查看+下载权限）
                 </span>
               </div>
-              <div v-else style="font-size:12px;color:#c9cdd4;line-height:24px">
+              <div v-if="autoGrantRoleNames(batchForm.category_id).length" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">
+                <el-tag
+                  v-for="name in autoGrantRoleNames(batchForm.category_id)"
+                  :key="name"
+                  type="warning"
+                  effect="plain"
+                >{{ name }}</el-tag>
+                <span style="font-size:12px;color:#86909c;line-height:28px">
+                  （分类默认授权角色，将自动获得查看+下载权限）
+                </span>
+              </div>
+              <div v-if="batchForm.role_ids.length === 0 && autoGrantRoleNames(batchForm.category_id).length === 0" style="font-size:12px;color:#c9cdd4;line-height:24px">
                 不选择则默认仅上传者和管理员可见
               </div>
             </div>
@@ -463,6 +485,13 @@ function isRecommendedCategory(item) {
 
 function roleLabel(rid) {
   return roleMap.value[rid] || `#${rid}`
+}
+
+// 分类默认授权角色名称（选中分类后提示将自动授权的角色）
+function autoGrantRoleNames(categoryId) {
+  const cat = categoryOptions.value.find(c => c.id === categoryId)
+  if (!cat || !Array.isArray(cat.default_role_ids) || cat.default_role_ids.length === 0) return []
+  return cat.default_role_ids.map(rid => roleMap.value[rid] || `#${rid}`)
 }
 
 // ========== 单文件上传 ==========

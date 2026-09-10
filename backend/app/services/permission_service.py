@@ -1,4 +1,5 @@
 """权限管理业务逻辑 — 角色驱动"""
+from datetime import date
 from sqlalchemy import select, and_, or_, insert, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
@@ -8,10 +9,17 @@ from app.models.category import Category
 from app.models.user import User
 
 DEFAULT_PERMISSIONS = {
-    "base": ["view_doc_list", "view_doc_detail", "download_doc", "print_doc"],
+    "base": ["view_doc_list", "view_doc_detail", "download_doc"],
+    # print_doc 已移出基础权限：打印需在角色管理/权限矩阵中显式授予
     # 已取消业务角色默认权限：upload_doc、modify_doc 等权限不再自动继承，
     # 全部由管理员在“权限矩阵”中按角色显式配置，可自由授予或取消
 }
+
+
+def _document_is_expired(document: Document) -> bool:
+    """判断文档是否已过期（超过失效日期），与 doc_service._is_document_expired 语义一致"""
+    expiry = getattr(document, "expiry_date", None)
+    return expiry is not None and expiry < date.today()
 
 
 async def get_doc_permissions(session: AsyncSession, doc_id: int) -> list[DocumentPermission]:
@@ -74,10 +82,31 @@ async def revoke_doc_permission(session: AsyncSession, perm_id: int) -> None:
 
 
 async def get_category_permissions(session: AsyncSession, category_id: int) -> list[CategoryPermission]:
-    """获取分类的所有权限记录"""
+    """获取分类的所有权限记录，并附带角色/用户名称"""
+    from app.models.role import Role
+
     stmt = select(CategoryPermission).where(CategoryPermission.category_id == category_id)
     result = await session.execute(stmt)
-    return list(result.scalars().all())
+    perms = list(result.scalars().all())
+
+    role_ids = {p.role_id for p in perms if p.role_id}
+    user_ids = {p.user_id for p in perms if p.user_id}
+    role_map: dict[int, str] = {}
+    user_map: dict[int, str] = {}
+    if role_ids:
+        rr = await session.execute(select(Role.id, Role.name).where(Role.id.in_(role_ids)))
+        role_map = dict(rr.all())
+    if user_ids:
+        uu = await session.execute(
+            select(User.id, User.display_name, User.username).where(User.id.in_(user_ids))
+        )
+        user_map = {uid: (dn or un) for uid, dn, un in uu.all()}
+
+    for p in perms:
+        p.role_name = role_map.get(p.role_id)
+        p.user_name = user_map.get(p.user_id)
+        p.category_name = getattr(p.category, "name", None) if p.category else None
+    return perms
 
 
 async def grant_category_permission(
@@ -133,6 +162,14 @@ def get_document_visibility_filter(user: User):
 
     role_ids = user.all_role_ids
 
+    # 文档级/分类级授权记录必须至少开启 can_view 或 can_download 才算可见，
+    # 避免矩阵中仅勾选编辑/打印（关闭查看）的记录让文档出现在列表里
+    _doc_grant = or_(
+        DocumentPermission.user_id == user.id,
+        DocumentPermission.role_id.in_(role_ids),
+    ) if role_ids else (DocumentPermission.user_id == user.id)
+    _doc_visible = or_(DocumentPermission.can_view == True, DocumentPermission.can_download == True)
+
     conditions = [
         # 上传者始终可见自己上传的文档（即使未选择授权角色）
         Document.uploaded_by == user.id,
@@ -142,28 +179,77 @@ def get_document_visibility_filter(user: User):
     ]
 
     if role_ids:
-        conditions.append(
-            Document.permissions.any(
-                or_(
-                    DocumentPermission.user_id == user.id,
-                    DocumentPermission.role_id.in_(role_ids),
-                )
-            )
-        )
+        conditions.append(Document.permissions.any(and_(_doc_grant, _doc_visible)))
         conditions.append(
             Document.category_id.in_(
                 select(CategoryPermission.category_id).where(
                     or_(
-                        CategoryPermission.user_id == user.id,
-                        CategoryPermission.role_id.in_(role_ids),
+                        and_(
+                            CategoryPermission.user_id == user.id,
+                            or_(
+                                CategoryPermission.can_view == True,
+                                CategoryPermission.can_edit == True,
+                            ),
+                        ),
+                        and_(
+                            CategoryPermission.role_id.in_(role_ids),
+                            or_(
+                                CategoryPermission.can_view == True,
+                                CategoryPermission.can_edit == True,
+                            ),
+                        ),
                     )
                 )
             )
         )
     else:
-        conditions.append(Document.permissions.any(DocumentPermission.user_id == user.id))
+        conditions.append(
+            Document.permissions.any(
+                and_(DocumentPermission.user_id == user.id, _doc_visible)
+            )
+        )
 
-    return or_(*conditions)
+    # 过期文档强制下线（非超管不可见），防止过期文档仍出现在列表
+    _not_expired = or_(Document.expiry_date.is_(None), Document.expiry_date >= date.today())
+    return and_(or_(*conditions), _not_expired)
+
+
+def can_user_view_document(user: User, document: Document) -> bool:
+    """判断用户是否可见某文档 — 与列表可见性过滤 get_document_visibility_filter 同源：
+    超管 / 上传者 / 公开分类 / 文档级授权（can_view 或 can_download）/ 分类级授权（can_view 或 can_edit）"""
+    if user.is_superuser:
+        return True
+    # 过期文档强制下线：非超管一律不可查看
+    if _document_is_expired(document):
+        return False
+    if document.uploaded_by == user.id:
+        return True
+
+    category = getattr(document, "category", None)
+    if category and getattr(category, "is_public", False):
+        return True
+
+    role_ids = user.all_role_ids
+
+    # 文档级授权 —— 与列表过滤一致：can_view 或 can_download 均可查看
+    for perm in document.permissions:
+        if not (perm.can_view or perm.can_download):
+            continue
+        if perm.user_id == user.id:
+            return True
+        if perm.role_id and perm.role_id in role_ids and (perm.can_view or perm.can_download):
+            return True
+
+    # 分类级授权 —— 与列表过滤一致：can_view 或 can_edit 均可查看
+    for cat_perm in getattr(category, "permissions", []) if category else []:
+        if not (cat_perm.can_view or cat_perm.can_edit):
+            continue
+        if cat_perm.user_id == user.id and (cat_perm.can_view or cat_perm.can_edit):
+            return True
+        if cat_perm.role_id and cat_perm.role_id in role_ids and (cat_perm.can_view or cat_perm.can_edit):
+            return True
+
+    return False
 
 
 def can_user_edit_document(user: User, document: Document) -> bool:
@@ -181,6 +267,15 @@ def can_user_edit_document(user: User, document: Document) -> bool:
             return True
         if perm.role_id and perm.role_id in role_ids and perm.can_edit:
             return True
+
+    # 分类级编辑权限（用户级或角色级）
+    category = getattr(document, "category", None)
+    for cat_perm in getattr(category, "permissions", []) if category else []:
+        if cat_perm.user_id == user.id and cat_perm.can_edit:
+            return True
+        if cat_perm.role_id and cat_perm.role_id in role_ids and cat_perm.can_edit:
+            return True
+
     return False
 
 
@@ -188,6 +283,9 @@ def can_user_download_document(user: User, document: Document) -> bool:
     """判断用户是否有下载某文档的权限（角色驱动）"""
     if user.is_superuser:
         return True
+    # 过期文档强制下线：非超管一律不可下载（含预览）
+    if _document_is_expired(document):
+        return False
     if document.uploaded_by == user.id:
         return True
 
@@ -207,12 +305,40 @@ def can_user_download_document(user: User, document: Document) -> bool:
 
     # 分类级查看权限（拥有分类权限即视为可下载该分类下的文档）
     for cat_perm in getattr(category, "permissions", []) if category else []:
-        if cat_perm.user_id == user.id and cat_perm.can_view:
+        if cat_perm.user_id == user.id and (cat_perm.can_view or cat_perm.can_edit):
             return True
-        if cat_perm.role_id and cat_perm.role_id in role_ids and cat_perm.can_view:
+        if cat_perm.role_id and cat_perm.role_id in role_ids and (cat_perm.can_view or cat_perm.can_edit):
             return True
 
     return False
+
+
+def can_user_print_document(user: User, document: Document) -> bool:
+    """判断用户是否有打印某文档的权限。
+
+    前提：用户拥有 print_doc 功能权限码（管理员默认拥有）。
+    文档级判定：上传者本人、文档级 can_print 记录；
+    无文档级打印记录时回退下载判定，保持“能下载即可打印”的兼容语义，
+    管理员可通过在文档级关闭 can_print 单独收紧某个文档的打印。
+    """
+    from app.core.permissions import has_permission
+
+    if not has_permission(user, "print_doc"):
+        return False
+    if user.is_superuser:
+        return True
+    if document.uploaded_by == user.id:
+        return True
+
+    role_ids = user.all_role_ids
+
+    for perm in document.permissions:
+        if perm.user_id == user.id and perm.can_print:
+            return True
+        if perm.role_id and perm.role_id in role_ids and perm.can_print:
+            return True
+
+    return can_user_download_document(user, document)
 
 
 def get_user_effective_permissions(user: User) -> list[str]:
@@ -336,18 +462,37 @@ async def save_role_permissions(
     }
 
 
-async def get_documents_for_role_matrix(session: AsyncSession, role_id: int) -> list[dict]:
-    """获取指定角色的文档权限矩阵数据（按分类分组）"""
+async def get_documents_for_role_matrix(
+    session: AsyncSession, role_id: int, keyword: str | None = None,
+) -> list[dict]:
+    """获取指定角色的文档权限矩阵数据（按分类分组）。
+
+    keyword：按标题/文档编号/原始文件名过滤，用于在文档量大时定位目标文档。
+    """
     cats_result = await session.execute(select(Category).order_by(Category.id))
     categories = list(cats_result.scalars().all())
+
+    def _apply_keyword(stmt):
+        if not keyword:
+            return stmt
+        kw = f"%{keyword}%"
+        return stmt.where(
+            or_(
+                Document.title.ilike(kw),
+                Document.doc_no.ilike(kw),
+                Document.file_name.ilike(kw),
+            )
+        )
 
     cat_docs = []
     for cat in categories:
         docs_result = await session.execute(
-            select(Document)
-            .where(Document.category_id == cat.id)
-            .order_by(Document.created_at.desc())
-            .limit(500)
+            _apply_keyword(
+                select(Document)
+                .where(Document.category_id == cat.id)
+                .order_by(Document.created_at.desc())
+                .limit(500)
+            )
         )
         docs = list(docs_result.scalars().all())
 
@@ -380,10 +525,12 @@ async def get_documents_for_role_matrix(session: AsyncSession, role_id: int) -> 
 
     # 无分类文档
     no_cat_result = await session.execute(
-        select(Document)
-        .where(Document.category_id.is_(None))
-        .order_by(Document.created_at.desc())
-        .limit(500)
+        _apply_keyword(
+            select(Document)
+            .where(Document.category_id.is_(None))
+            .order_by(Document.created_at.desc())
+            .limit(500)
+        )
     )
     no_cat_docs = list(no_cat_result.scalars().all())
     if no_cat_docs:

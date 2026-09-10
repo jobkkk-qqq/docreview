@@ -9,6 +9,7 @@
   v3 — 文件重复检测（documents 表添加 content_hash 字段）
   v4 — 回填已有文档的 content_hash（文件内容 SHA-256）
   v5 — 分类三级化（documents 表添加 department_id、doc_level 字段）
+  v6 — 分类默认授权角色（新建 category_default_roles 表）
 """
 import hashlib
 import logging
@@ -22,7 +23,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # 当前数据库 schema 版本，新增迁移时递增此值
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 # system_configs 中存储版本号的 key
 VERSION_KEY = "schema_version"
@@ -216,6 +217,25 @@ async def _migrate_v4(engine: AsyncEngine) -> None:
         logger.info(f"[AutoMigrate][v4] 回填完成，共处理 {updated_count}/{len(docs)} 个文档的 content_hash")
 
 
+async def _migrate_v6(conn) -> None:
+    """v6 迁移：新建 category_default_roles 表（分类默认授权角色）"""
+    await conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS category_default_roles (
+            id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+            category_id INTEGER NOT NULL,
+            role_id INTEGER NOT NULL,
+            created_by INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(category_id) REFERENCES categories (id) ON DELETE CASCADE,
+            FOREIGN KEY(role_id) REFERENCES roles (id) ON DELETE CASCADE,
+            FOREIGN KEY(created_by) REFERENCES users (id) ON DELETE SET NULL
+        )
+    """))
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_cat_default_role_category_id ON category_default_roles (category_id)"))
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_cat_default_role_role_id ON category_default_roles (role_id)"))
+    logger.info("[AutoMigrate][v6] category_default_roles 表已创建")
+
+
 async def auto_migrate(engine: AsyncEngine) -> None:
     """
     自动迁移入口。
@@ -231,7 +251,7 @@ async def auto_migrate(engine: AsyncEngine) -> None:
 
         logger.info(f"[AutoMigrate] 数据库版本 v{db_version}，需要迁移到 v{CURRENT_SCHEMA_VERSION}")
 
-        # v1、v2、v3、v5 均为纯 DDL/轻量更新，在事务内执行
+        # v1、v2、v3、v5、v6 均为纯 DDL/轻量更新，在事务内执行
         if db_version < 1:
             await _migrate_v1(conn)
         if db_version < 2:
@@ -240,6 +260,8 @@ async def auto_migrate(engine: AsyncEngine) -> None:
             await _migrate_v3(conn)
         if db_version < 5:
             await _migrate_v5(conn)
+        if db_version < 6:
+            await _migrate_v6(conn)
 
         # 先提交版本号并退出 conn 事务
         await _set_db_version(conn, CURRENT_SCHEMA_VERSION)

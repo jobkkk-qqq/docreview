@@ -97,6 +97,8 @@ class DocumentOut(BaseModel):
     department: Optional[DepartmentBrief] = None
     uploader: Optional[UploaderBrief] = None
     can_download: bool = False
+    can_print: bool = False
+    is_expired: bool = False
     has_pdf: bool = False
 
     model_config = {"from_attributes": True}
@@ -118,6 +120,8 @@ class DocumentListOut(BaseModel):
     uploader: Optional[UploaderBrief] = None
     created_at: datetime
     can_download: bool = False
+    can_print: bool = False
+    is_expired: bool = False
     has_pdf: bool = False
 
     model_config = {"from_attributes": True}

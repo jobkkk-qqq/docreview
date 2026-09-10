@@ -20,6 +20,7 @@ MENU_FUNCTION_TREE = [
     {"code": "print_doc", "name": "预览/打印文档", "type": "function", "parent": "view_doc_list", "sort": 5},
     {"code": "download_doc", "name": "下载文档", "type": "function", "parent": "view_doc_list", "sort": 6},
     {"code": "manage_doc_permissions", "name": "管理文档权限", "type": "function", "parent": "view_doc_list", "sort": 7},
+    {"code": "review_doc", "name": "审核文档", "type": "function", "parent": "view_doc_list", "sort": 8},
 
     # 3. 文档上传（独立菜单入口）
     {"code": "document_upload", "name": "文档上传", "type": "menu", "menu_key": "document_upload", "sort": 3},

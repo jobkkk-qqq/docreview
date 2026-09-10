@@ -19,6 +19,7 @@ class CategoryCreate(BaseModel):
     sort_order: int = Field(default=0, description="排序号")
     is_public: bool = Field(default=False, description="是否全员可见")
     business_type: Optional[str] = Field(None, max_length=50, description="业务类型标签（standard/form/quality/environment/patent/contract）")
+    default_role_ids: Optional[list[int]] = Field(None, description="默认授权角色ID列表（上传到该分类的文档自动授予查看/下载权限）")
 
 
 class CategoryUpdate(BaseModel):
@@ -30,6 +31,7 @@ class CategoryUpdate(BaseModel):
     is_active: Optional[bool] = Field(None, description="是否启用")
     is_public: Optional[bool] = Field(None, description="是否全员可见")
     business_type: Optional[str] = Field(None, max_length=50, description="业务类型标签")
+    default_role_ids: Optional[list[int]] = Field(None, description="默认授权角色ID列表（设为空列表表示清空）")
 
 
 # ── 响应模型 ──────────────────────────────────────────────────
@@ -47,6 +49,7 @@ class CategoryOut(BaseModel):
     business_type: Optional[str] = None
     created_at: datetime
     doc_count: int = 0
+    default_role_ids: list[int] = Field(default_factory=list, description="默认授权角色ID列表")
 
     model_config = {"from_attributes": True}
 

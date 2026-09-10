@@ -11,12 +11,48 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_async_session
 from app.api.deps import require_admin, require_permission, get_current_user, get_client_ip
 from app.models.user import User
-from app.models.category import Category
+from app.models.category import Category, CategoryDefaultRole
+from app.models.role import Role
 from app.models.audit_log import AuditLog
 from app.schemas.category import CategoryCreate, CategoryUpdate, CategoryOut, CategoryTreeItem
 from app.schemas.user import PaginatedResponse
 
 router = APIRouter(prefix="/categories", tags=["文档分类"])
+
+
+async def _get_default_role_ids(session: AsyncSession, category_id: int) -> list[int]:
+    """查询分类的默认授权角色ID列表"""
+    stmt = select(CategoryDefaultRole.role_id).where(CategoryDefaultRole.category_id == category_id)
+    rows = (await session.execute(stmt)).all()
+    return [r[0] for r in rows]
+
+
+async def _validate_role_ids(session: AsyncSession, role_ids: list[int]) -> None:
+    """校验角色ID列表均存在，不存在的抛 400"""
+    if not role_ids:
+        return
+    stmt = select(func.count()).select_from(Role).where(Role.id.in_(role_ids))
+    count = (await session.execute(stmt)).scalar() or 0
+    if count != len(set(role_ids)):
+        raise HTTPException(status_code=400, detail="默认授权角色中存在不存在的角色ID")
+
+
+async def _save_default_roles(
+    session: AsyncSession,
+    category_id: int,
+    role_ids: list[int],
+    created_by: int,
+) -> list[int]:
+    """全量覆盖式保存分类的默认授权角色，返回最新的角色ID列表"""
+    await _validate_role_ids(session, role_ids)
+    stmt = select(CategoryDefaultRole).where(CategoryDefaultRole.category_id == category_id)
+    result = await session.execute(stmt)
+    for existing in result.scalars().all():
+        await session.delete(existing)
+    for rid in dict.fromkeys(role_ids):
+        session.add(CategoryDefaultRole(category_id=category_id, role_id=rid, created_by=created_by))
+    await session.flush()
+    return await _get_default_role_ids(session, category_id)
 
 
 async def _attach_doc_counts(session: AsyncSession, categories: list[Category]) -> dict[int, int]:
@@ -35,6 +71,21 @@ async def _attach_doc_counts(session: AsyncSession, categories: list[Category]) 
     return {row[0]: row[1] for row in rows}
 
 
+async def _attach_default_role_ids(session: AsyncSession, categories: list[Category]) -> dict[int, list[int]]:
+    """批量查询分类的默认授权角色，返回 {category_id: [role_id]}"""
+    if not categories:
+        return {}
+    cat_ids = [c.id for c in categories]
+    stmt = select(CategoryDefaultRole.category_id, CategoryDefaultRole.role_id).where(
+        CategoryDefaultRole.category_id.in_(cat_ids)
+    )
+    rows = (await session.execute(stmt)).all()
+    mapping: dict[int, list[int]] = {cid: [] for cid in cat_ids}
+    for cid, rid in rows:
+        mapping[cid].append(rid)
+    return mapping
+
+
 @router.get("/tree", summary="分类树")
 async def get_category_tree(
     session: AsyncSession = Depends(get_async_session),
@@ -45,10 +96,12 @@ async def get_category_tree(
     result = await session.execute(stmt)
     categories = list(result.scalars().all())
     doc_counts = await _attach_doc_counts(session, categories)
+    default_roles = await _attach_default_role_ids(session, categories)
     items = []
     for c in categories:
         item = CategoryOut.model_validate(c)
         item.doc_count = doc_counts.get(c.id, 0)
+        item.default_role_ids = default_roles.get(c.id, [])
         items.append(item)
     return items
 
@@ -70,10 +123,12 @@ async def list_categories(
     categories = list(result.scalars().all())
 
     doc_counts = await _attach_doc_counts(session, categories)
+    default_roles = await _attach_default_role_ids(session, categories)
     items = []
     for c in categories:
         item = CategoryOut.model_validate(c)
         item.doc_count = doc_counts.get(c.id, 0)
+        item.default_role_ids = default_roles.get(c.id, [])
         items.append(item)
     return PaginatedResponse(total=total, page=page, page_size=page_size, items=items)
 
@@ -121,18 +176,25 @@ async def create_category(
     session.add(category)
     await session.flush()
 
+    # 默认授权角色
+    default_role_ids = []
+    if data.default_role_ids:
+        default_role_ids = await _save_default_roles(session, category.id, data.default_role_ids, current_user.id)
+
     # 记录审计日志
     ip_address = get_client_ip(request)
     log = AuditLog(
         user_id=current_user.id, action="create",
         target_type="category", target_id=category.id,
         ip_address=ip_address,
-        detail={"name": data.name, "code": data.code},
+        detail={"name": data.name, "code": data.code, "default_role_ids": default_role_ids},
     )
     session.add(log)
 
     await session.refresh(category)
-    return CategoryOut.model_validate(category)
+    item = CategoryOut.model_validate(category)
+    item.default_role_ids = default_role_ids
+    return item
 
 
 @router.put("/{cat_id}", summary="更新分类")
@@ -150,20 +212,29 @@ async def update_category(
         raise HTTPException(status_code=404, detail="分类不存在")
 
     update_data = data.model_dump(exclude_unset=True)
+    default_role_ids_provided = "default_role_ids" in update_data
+    default_role_ids = update_data.pop("default_role_ids", None)
     for field, value in update_data.items():
         setattr(category, field, value)
     await session.flush()
+
+    if default_role_ids_provided:
+        default_role_ids = await _save_default_roles(session, cat_id, default_role_ids or [], current_user.id)
+    else:
+        default_role_ids = await _get_default_role_ids(session, cat_id)
 
     ip_address = get_client_ip(request)
     log = AuditLog(
         user_id=current_user.id, action="update",
         target_type="category", target_id=cat_id,
-        ip_address=ip_address, detail=update_data,
+        ip_address=ip_address, detail={**update_data, "default_role_ids": default_role_ids},
     )
     session.add(log)
 
     await session.refresh(category)
-    return CategoryOut.model_validate(category)
+    item = CategoryOut.model_validate(category)
+    item.default_role_ids = default_role_ids
+    return item
 
 
 @router.delete("/{cat_id}", summary="删除分类")
@@ -240,7 +311,8 @@ async def list_categories_simple(
     
     result = await session.execute(stmt)
     categories = list(result.scalars().all())
-    
+    default_roles = await _attach_default_role_ids(session, categories)
+
     items = []
     for c in categories:
         items.append({
@@ -248,5 +320,6 @@ async def list_categories_simple(
             "name": c.name,
             "code": c.code,
             "business_type": c.business_type,
+            "default_role_ids": default_roles.get(c.id, []),
         })
     return {"items": items}

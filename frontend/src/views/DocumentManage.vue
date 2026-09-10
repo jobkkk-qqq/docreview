@@ -134,6 +134,7 @@
                   <div class="card-meta">
                     <el-icon><Clock /></el-icon>
                     <span>{{ formatDate(doc.created_at) }}</span>
+                    <el-tag v-if="doc.is_expired" size="small" type="danger" effect="plain" style="margin-left:4px">已过期</el-tag>
                   </div>
                   <div class="card-uploader" v-if="doc.uploader">
                     <el-icon><User /></el-icon>
@@ -145,7 +146,7 @@
                 <div class="card-actions" @click.stop>
                   <el-button type="primary" link size="small" @click.stop="handleView(doc)">查看</el-button>
                   <el-button v-if="canEdit" type="warning" link size="small" @click.stop="handleEdit(doc)">编辑</el-button>
-                  <el-button type="success" link size="small" @click.stop="handleDownload(doc)">下载</el-button>
+                  <el-button v-if="doc.can_download !== false" type="success" link size="small" @click.stop="handleDownload(doc)">下载</el-button>
                   <el-button
                     v-if="isPreviewable(doc.file_name) && doc.can_download"
                     type="primary"
@@ -214,6 +215,7 @@
                 <el-table-column label="上传时间" width="126" header-align="center">
                   <template #default="{ row }">
                     {{ formatDate(row.created_at) }}
+                    <el-tag v-if="row.is_expired" size="small" type="danger" effect="plain" style="margin-left:2px">过期</el-tag>
                   </template>
                 </el-table-column>
                 <el-table-column label="操作" width="340" fixed="right">
@@ -221,7 +223,7 @@
                     <div class="table-op-btns">
                     <el-button type="primary" link size="small" @click.stop="handleView(row)">查看</el-button>
                     <el-button v-if="canEdit" type="warning" link size="small" @click.stop="handleEdit(row)">编辑</el-button>
-                    <el-button type="success" link size="small" @click.stop="handleDownload(row)">下载</el-button>
+                    <el-button v-if="row.can_download !== false" type="success" link size="small" @click.stop="handleDownload(row)">下载</el-button>
                     <el-button
                       v-if="isPreviewable(row.file_name) && row.can_download"
                       type="primary"
@@ -288,14 +290,17 @@
           </el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="上传人">{{ currentDoc.uploader?.display_name || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="上传时间">{{ currentDoc.created_at }}</el-descriptions-item>
+        <el-descriptions-item label="上传时间">
+          {{ currentDoc.created_at }}
+          <el-tag v-if="currentDoc.is_expired" size="small" type="danger" effect="plain" style="margin-left:4px">已过期</el-tag>
+        </el-descriptions-item>
         <el-descriptions-item label="文件大小">{{ formatFileSize(currentDoc.file_size) }}</el-descriptions-item>
         <el-descriptions-item label="文件格式">{{ currentDoc.file_type || '-' }}</el-descriptions-item>
         <el-descriptions-item label="文档描述" :span="2">{{ currentDoc.summary || '无' }}</el-descriptions-item>
       </el-descriptions>
       <template #footer>
         <el-button @click="detailVisible = false">关闭</el-button>
-        <el-button type="success" @click="handleDownload(currentDoc)">下载文档</el-button>
+        <el-button v-if="currentDoc.can_download !== false" type="success" @click="handleDownload(currentDoc)">下载文档</el-button>
       </template>
     </el-dialog>
 

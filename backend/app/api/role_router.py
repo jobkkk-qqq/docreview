@@ -258,10 +258,35 @@ async def delete_role(
         raise HTTPException(status_code=400, detail=f"该角色下还有 {user_count} 个用户，无法删除")
 
     ip_address = get_client_ip(request)
+
+    # 清理该角色的授权记录（角色删除后记录无意义，避免僵尸数据）：
+    # 文档权限、分类权限、分类默认授权角色；菜单功能关联随 role 删除自动级联
+    from app.models.document import DocumentPermission, CategoryPermission
+    from app.models.category import CategoryDefaultRole
+
+    dp_count = (await session.execute(
+        select(func.count()).select_from(DocumentPermission).where(DocumentPermission.role_id == role_id)
+    )).scalar() or 0
+    cp_count = (await session.execute(
+        select(func.count()).select_from(CategoryPermission).where(CategoryPermission.role_id == role_id)
+    )).scalar() or 0
+    cdr_count = (await session.execute(
+        select(func.count()).select_from(CategoryDefaultRole).where(CategoryDefaultRole.role_id == role_id)
+    )).scalar() or 0
+
+    await session.execute(sa_delete(DocumentPermission).where(DocumentPermission.role_id == role_id))
+    await session.execute(sa_delete(CategoryPermission).where(CategoryPermission.role_id == role_id))
+    await session.execute(sa_delete(CategoryDefaultRole).where(CategoryDefaultRole.role_id == role_id))
+
     log = AuditLog(
         user_id=current_user.id, action="delete",
         target_type="role", target_id=role.id,
-        ip_address=ip_address, detail={"name": role.name},
+        ip_address=ip_address, detail={
+            "name": role.name,
+            "清理文档权限记录": dp_count,
+            "清理分类权限记录": cp_count,
+            "清理分类默认授权配置": cdr_count,
+        },
     )
     session.add(log)
 

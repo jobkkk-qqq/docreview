@@ -111,6 +111,7 @@
         <el-table-column label="上传时间" width="160">
           <template #default="{ row }">
             {{ formatDate(row.created_at) }}
+            <el-tag v-if="row.is_expired" size="small" type="danger" effect="plain" style="margin-left:4px">已过期</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="220" fixed="right">
@@ -128,9 +129,16 @@
             >
               预览
             </el-button>
-            <el-button type="success" link size="small" @click="handleDownload(row)">
+            <el-button
+              v-if="row.can_download !== false"
+              type="success"
+              link
+              size="small"
+              @click="handleDownload(row)"
+            >
               下载
             </el-button>
+            <span v-else style="color:#86909c;font-size:12px">无下载权限</span>
             </div>
           </template>
         </el-table-column>
