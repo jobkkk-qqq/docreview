@@ -237,7 +237,7 @@
                     <el-tag v-if="row.is_expired" size="small" type="danger" effect="plain" style="margin-left:2px">过期</el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column label="操作" width="480" fixed="right">
+                <el-table-column label="操作" width="320" fixed="right">
                   <template #default="{ row }">
                     <div class="table-op-btns">
                     <el-button type="primary" link size="small" @click.stop="handleView(row)">查看</el-button>
@@ -1189,8 +1189,11 @@ onMounted(() => { fetchGroupedDocuments(); fetchOptions() })
   overflow: visible;
 }
 
-/* 列表操作按钮：单行不换行，避免在狭小列内被截断 */
+/* 列表操作按钮：右对齐紧凑排列，避免在狭小列内被截断 */
 .table-op-btns {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   white-space: nowrap;
 }
 .search-form {
