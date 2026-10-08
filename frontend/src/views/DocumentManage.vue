@@ -237,7 +237,7 @@
                     <el-tag v-if="row.is_expired" size="small" type="danger" effect="plain" style="margin-left:2px">过期</el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column label="操作" width="320" fixed="right">
+                <el-table-column label="操作" :width="opColumnWidth" fixed="right">
                   <template #default="{ row }">
                     <div class="table-op-btns">
                     <el-button type="primary" link size="small" @click.stop="handleView(row)">查看</el-button>
@@ -761,6 +761,24 @@ const canDelete = computed(() => canDeleteDoc())
 const canDeleteVersion = computed(() => canDeleteDocVersion())
 const canEdit = computed(() => canModifyDoc())
 const canManagePermissions = computed(() => canManageDocPermissions())
+
+// 操作列宽度：按当前用户权限的按钮数量动态估算，使各角色的列都贴合内容、避免留白
+const opColumnWidth = computed(() => {
+  const btnW = (len) => len * 14 + 16 // 中文按钮按 14px/字 + 内边距估算
+  const gap = 8
+  const pad = 26
+  const texts = []
+  texts.push('查看')
+  texts.push('9个版本') // 版本按钮按最宽文本占位，避免截断
+  if (canEdit.value) texts.push('编辑')
+  if (canDelete.value) texts.push('删除')
+  texts.push('下载')
+  texts.push('预览')
+  if (canManagePermissions.value) texts.push('权限')
+  let w = pad
+  texts.forEach((t, i) => { w += btnW(t.length) + (i > 0 ? gap : 0) })
+  return Math.max(170, Math.min(320, Math.round(w)))
+})
 
 // ── 分组折叠 ──
 
