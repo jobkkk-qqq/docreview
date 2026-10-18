@@ -1,7 +1,74 @@
 <template>
   <div class="document-manage">
-    <!-- 搜索栏 -->
-    <el-card shadow="never" class="search-card">
+    <!-- 左侧：分类目录树（宽度可拖动） -->
+    <aside
+      class="category-sidebar"
+      :class="{ 'is-collapsed': sidebarCollapsed, 'is-resizing': isResizing }"
+      :style="sidebarCollapsed ? undefined : { width: sidebarWidth + 'px' }"
+    >
+      <div
+        v-show="!sidebarCollapsed && !isMobile"
+        class="sidebar-resizer"
+        title="拖动调整宽度，双击恢复默认"
+        @pointerdown="startResize"
+        @dblclick="resetSidebarWidth"
+      />
+      <div class="sidebar-header">
+        <span class="sidebar-title">文档分类</span>
+        <el-tooltip :content="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'" placement="top">
+          <el-button link :icon="sidebarCollapsed ? Expand : Fold" @click="sidebarCollapsed = !sidebarCollapsed" />
+        </el-tooltip>
+      </div>
+
+      <el-scrollbar v-show="!sidebarCollapsed" class="sidebar-scroll">
+        <div
+          class="tree-node tree-all"
+          :class="{ active: selectedCategoryId === null }"
+          @click="selectCategory(null)"
+        >
+          <el-icon class="tree-icon"><Files /></el-icon>
+          <span class="tree-label">全部分类</span>
+          <span class="tree-count">{{ totalDocCount }}</span>
+        </div>
+
+        <el-tree
+          ref="categoryTreeRef"
+          :data="categoryTree"
+          node-key="id"
+          :props="{ label: 'name', children: 'children' }"
+          :expand-on-click-node="false"
+          :default-expanded-keys="expandedCategoryKeys"
+          highlight-current
+          @node-click="handleCategoryClick"
+        >
+          <template #default="{ data }">
+            <span class="tree-node" :class="{ active: selectedCategoryId === data.id }">
+              <el-icon class="tree-icon">
+                <FolderOpened v-if="data.children && data.children.length" />
+                <Document v-else />
+              </el-icon>
+              <span class="tree-label" :title="data.path">{{ data.name }}</span>
+              <span class="tree-count">{{ data.subtree_doc_count ?? data.doc_count }}</span>
+            </span>
+          </template>
+        </el-tree>
+
+        <div
+          class="tree-node tree-uncat"
+          :class="{ active: selectedCategoryId === UNCATEGORIZED }"
+          @click="selectCategory(UNCATEGORIZED)"
+        >
+          <el-icon class="tree-icon"><FolderDelete /></el-icon>
+          <span class="tree-label">未分类</span>
+          <span class="tree-count">{{ uncategorizedCount }}</span>
+        </div>
+      </el-scrollbar>
+    </aside>
+
+    <!-- 右侧：文档列表 -->
+    <div class="doc-pane">
+      <!-- 搜索栏 -->
+      <el-card shadow="never" class="search-card">
       <el-form :inline="true" :model="searchForm" class="search-form">
         <el-form-item label="关键词">
           <el-input
@@ -11,11 +78,6 @@
             style="width: 200px"
             @keyup.enter="handleSearch"
           />
-        </el-form-item>
-        <el-form-item label="一级分类">
-          <el-select v-model="searchForm.category_id" placeholder="全部分类" clearable style="width: 160px">
-            <el-option v-for="item in categoryOptions" :key="item.id" :label="item.name" :value="item.id" />
-          </el-select>
         </el-form-item>
         <el-form-item label="部门">
           <el-select v-model="searchForm.department_id" placeholder="全部部门" clearable style="width: 140px">
@@ -64,40 +126,25 @@
       </div>
     </el-card>
 
-    <!-- 分组文档列表 -->
-    <div class="doc-groups" v-loading="loading">
-      <template v-if="categoryGroups.length > 0">
-        <div
-          v-for="group in categoryGroups"
-          :key="group.id ?? '__uncat__'"
-          class="doc-group"
-        >
-          <!-- 分类标题栏 -->
-          <div class="group-header" @click="toggleGroup(group)">
-            <div class="group-header-left">
-              <el-icon class="group-toggle-icon" :class="{ rotated: group._expanded !== false }">
-                <ArrowDown />
-              </el-icon>
-              <el-icon class="group-folder-icon"><FolderOpened /></el-icon>
-              <span class="group-name">{{ group.name }}</span>
-              <el-tag size="small" type="info" effect="plain" class="group-count">
-                第 {{ group._page || 1 }}/{{ Math.ceil(group.total / 30) || 1 }} 页，{{ group.documents.length }} / {{ group.total }} 个
-              </el-tag>
-            </div>
-            <div class="group-header-right">
-              <span class="group-latest">最近上传</span>
-            </div>
-          </div>
+    <!-- 当前分类下的文档 -->
+    <div class="doc-list-area" v-loading="loading">
+      <div class="list-toolbar">
+        <span class="current-category">
+          <el-icon><FolderOpened /></el-icon>
+          {{ currentCategoryLabel }}
+        </span>
+        <span class="doc-total">共 {{ pagination.total }} 篇</span>
+      </div>
 
-          <!-- 文档卡片网格 -->
-          <el-collapse-transition>
-            <div v-show="group._expanded !== false" v-if="viewMode === 'card'" class="doc-cards">
-              <div
-                v-for="doc in group.documents"
-                :key="doc.id"
-                class="doc-card"
-                @click="handleView(doc)"
-              >
+      <template v-if="documents.length > 0">
+        <!-- 文档卡片网格 -->
+        <div v-if="viewMode === 'card'" class="doc-cards">
+          <div
+            v-for="doc in documents"
+            :key="doc.id"
+            class="doc-card"
+            @click="handleView(doc)"
+          >
                 <!-- 卡片顶部：文件类型图标区 -->
                 <div class="card-top">
                   <div class="card-type-icon" :class="'type-' + (doc.file_name ? (doc.file_name.split('.').pop()||'').toLowerCase() : 'unknown')">
@@ -176,13 +223,11 @@
                   <el-button v-if="canDelete" type="danger" link size="small" @click.stop="handleDelete(doc)">删除</el-button>
                 </div>
               </div>
-            </div>
-          </el-collapse-transition>
+        </div>
 
-          <!-- 文档列表视图 -->
-          <el-collapse-transition>
-            <div v-show="group._expanded !== false" v-if="viewMode === 'list'" class="doc-list">
-              <el-table :data="group.documents" stripe size="small" style="width: 100%">
+        <!-- 文档列表视图 -->
+        <div v-if="viewMode === 'list'" class="doc-list">
+          <el-table :data="documents" stripe size="small" style="width: 100%">
                 <el-table-column label="文件名" min-width="240">
                   <template #default="{ row }">
                     <div class="list-file-name" @click="handleView(row)">
@@ -264,26 +309,26 @@
                     </div>
                   </template>
                 </el-table-column>
-              </el-table>
-            </div>
-          </el-collapse-transition>
+          </el-table>
+        </div>
 
-          <!-- 组内分页 -->
-          <div v-if="group.total > 30" class="group-pagination">
-            <el-pagination
-              small
-              layout="prev, pager, next"
-              :current-page="group._page"
-              :page-size="30"
-              :total="group.total"
-              @current-change="(p) => handleGroupPageChange(group.id, p)"
-            />
-          </div>
+        <!-- 分页 -->
+        <div class="list-pagination">
+          <el-pagination
+            v-model:current-page="pagination.page"
+            v-model:page-size="pagination.pageSize"
+            :total="pagination.total"
+            :page-sizes="[12, 24, 48, 96]"
+            layout="total, sizes, prev, pager, next, jumper"
+            background
+            @size-change="handlePageSizeChange"
+            @current-change="handlePageChange"
+          />
         </div>
       </template>
 
       <!-- 空状态 -->
-      <el-empty v-else-if="!loading" description="暂无符合条件的文档">
+      <el-empty v-else-if="!loading" description="该分类下暂无符合条件的文档">
         <template #image>
           <el-icon :size="60" color="#c0c4cc"><FolderDelete /></el-icon>
         </template>
@@ -291,6 +336,7 @@
           上传文档
         </el-button>
       </el-empty>
+    </div>
     </div>
 
     <!-- 文档详情对话框 -->
@@ -340,7 +386,7 @@
         </el-form-item>
         <el-form-item label="分类" prop="category_id">
           <el-select v-model="editForm.category_id" placeholder="请选择分类" style="width: 100%">
-            <el-option v-for="item in categoryOptions" :key="item.id" :label="item.name" :value="item.id" />
+            <el-option v-for="item in categoryOptions" :key="item.id" :label="categoryOptionLabel(item)" :value="item.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="部门">
@@ -658,18 +704,19 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Refresh, Upload, Document, Setting, WarningFilled, ArrowDown,
-  FolderOpened, FolderDelete, Clock, Grid, List, User
+  FolderOpened, FolderDelete, Clock, Grid, List, User, Files, Expand, Fold
 } from '@element-plus/icons-vue'
 import {
-  getDocumentGrouped, getDocumentDetail, downloadDocument, deleteDocument,
+  getDocumentList, getDocumentDetail, downloadDocument, deleteDocument,
   updateDocument, reportPreviewLog, getDocPermissions, grantDocPermission,
   revokeDocPermission, getDocLevels, getDocumentVersions, rollbackDocumentVersion
 } from '../api/document.js'
 import { getCategoryListSimple } from '../api/category.js'
+import { categoryOptionLabel } from '../utils/category.js'
 import { getDepartmentSimple } from '../api/department.js'
 import { getUserList } from '../api/user.js'
 import { getRoleList } from '../api/role.js'
@@ -681,7 +728,21 @@ import { useMobile } from '../composables/useMobile.js'
 import request from '../api/request.js'
 
 const loading = ref(false)
-const categoryGroups = ref([])
+
+// ── 分类目录树（左侧栏）──
+const UNCATEGORIZED = '__uncat__'
+const categoryTree = ref([])
+const categoryTreeRef = ref(null)
+const uncategorizedCount = ref(0)
+const totalDocCount = ref(0)
+// null = 全部分类；UNCATEGORIZED = 未分类；数字 = 具体分类ID
+const selectedCategoryId = ref(null)
+const sidebarCollapsed = ref(false)
+const expandedCategoryKeys = ref([])
+
+// ── 当前分类下的文档列表 ──
+const documents = ref([])
+const pagination = reactive({ page: 1, pageSize: 12, total: 0 })
 
 // 视图模式：card / list，持久化到 localStorage
 const VIEW_MODE_KEY = 'docmanage_view_mode'
@@ -693,6 +754,83 @@ function setViewMode(mode) {
 
 // 移动端检测（使用公共 composable）
 const { isMobile } = useMobile()
+
+// 侧边栏宽度可拖动调整，并记忆上次宽度
+const SIDEBAR_WIDTH_KEY = 'docmanage_sidebar_width'
+const SIDEBAR_DEFAULT_WIDTH = 240
+const SIDEBAR_MAX_WIDTH = 520
+// 最小宽度按「至少能看清 4 个汉字」推算：固定占用 + 4 字宽 + 树的最深缩进
+const SIDEBAR_MIN_CHARS = 4
+const SIDEBAR_CHAR_PX = 13      // 侧边栏字号 13px，一个汉字约 13px
+const SIDEBAR_CHROME_PX = 104   // 内边距 + 文件夹图标 + 间距 + 数量徽标（含三位数）+ 滚动条余量
+const TREE_INDENT_PX = 16       // el-tree 每层缩进
+
+const sidebarWidth = ref(Number(localStorage.getItem(SIDEBAR_WIDTH_KEY)) || SIDEBAR_DEFAULT_WIDTH)
+const isResizing = ref(false)
+let resizeStartX = 0
+let resizeStartWidth = 0
+
+/** 分类树的最大层级深度（用于把缩进算进最小宽度） */
+function maxTreeDepth(nodes, depth = 0) {
+  let max = depth
+  for (const node of nodes || []) {
+    const children = node.children || []
+    if (children.length) max = Math.max(max, maxTreeDepth(children, depth + 1))
+  }
+  return max
+}
+
+/** 侧边栏最小宽度：保证分类名至少显示 4 个汉字 */
+const minSidebarWidth = computed(() =>
+  SIDEBAR_CHROME_PX + SIDEBAR_CHAR_PX * SIDEBAR_MIN_CHARS + maxTreeDepth(categoryTree.value) * TREE_INDENT_PX
+)
+
+/** 最大宽度：右侧文档区至少保留 420px，避免把列表挤没 */
+function maxSidebarWidth() {
+  const available = window.innerWidth - 420
+  return Math.max(minSidebarWidth.value, Math.min(SIDEBAR_MAX_WIDTH, available))
+}
+
+function clampSidebarWidth(value) {
+  return Math.min(Math.max(value, minSidebarWidth.value), maxSidebarWidth())
+}
+
+function startResize(event) {
+  if (event.button > 0) return
+  event.preventDefault()
+  isResizing.value = true
+  resizeStartX = event.clientX
+  resizeStartWidth = sidebarWidth.value
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  window.addEventListener('pointermove', handleResizeMove)
+  window.addEventListener('pointerup', stopResize)
+}
+
+function handleResizeMove(event) {
+  if (!isResizing.value) return
+  sidebarWidth.value = clampSidebarWidth(resizeStartWidth + (event.clientX - resizeStartX))
+}
+
+function stopResize() {
+  if (!isResizing.value) return
+  isResizing.value = false
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+  window.removeEventListener('pointermove', handleResizeMove)
+  window.removeEventListener('pointerup', stopResize)
+  localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth.value))
+}
+
+function resetSidebarWidth() {
+  sidebarWidth.value = clampSidebarWidth(SIDEBAR_DEFAULT_WIDTH)
+  localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth.value))
+}
+
+/** 窗口尺寸变化时收窄过大的侧边栏，保证文档列表可见 */
+function handleWindowResize() {
+  if (!isResizing.value) sidebarWidth.value = clampSidebarWidth(sidebarWidth.value)
+}
 
 // 搜索
 const categoryOptions = ref([])
@@ -780,45 +918,82 @@ const opColumnWidth = computed(() => {
   return Math.max(170, Math.min(320, Math.round(w)))
 })
 
-// ── 分组折叠 ──
-
-function toggleGroup(group) {
-  if (group._expanded === undefined) {
-    group._expanded = false
-  } else {
-    group._expanded = !group._expanded
-  }
-}
-
 // ── 数据加载 ──
 
-async function fetchGroupedDocuments() {
+/** 加载当前选中分类下的文档（右侧列表） */
+async function fetchDocuments() {
   loading.value = true
   try {
     const params = {
       keyword: searchForm.keyword || undefined,
-      category_id: searchForm.category_id || undefined,
       department_id: searchForm.department_id || undefined,
       doc_level: searchForm.doc_level || undefined,
       confidential_level: searchForm.confidential_level || undefined,
-      page: 1,
-      page_size: 30,
+      page: pagination.page,
+      page_size: pagination.pageSize,
     }
-    const res = await getDocumentGrouped(params)
-    const groups = res || []
-    categoryGroups.value = groups.map(g => ({
-      ...g,
-      _page: 1,
-      _expanded: true,
-    }))
+    // 分类筛选来自左侧目录树：选具体分类时带 category_id（后端含其子分类）
+    if (typeof selectedCategoryId.value === 'number') {
+      params.category_id = selectedCategoryId.value
+    }
+    const res = await getDocumentList(params)
+    let items = res.items || res.data || []
+    // 「未分类」在前端过滤（后端没有专门的未分类查询参数）
+    if (selectedCategoryId.value === UNCATEGORIZED) {
+      items = items.filter(d => d.category_id == null && !d.category)
+    }
+    documents.value = items
+    pagination.total = selectedCategoryId.value === UNCATEGORIZED ? items.length : (res.total || 0)
   } catch { /* ignore */ } finally { loading.value = false }
 }
-async function fetchCategories() {
+
+/** 加载分类目录树 + 各分类文档数（左侧栏数据源） */
+async function fetchCategoryTree() {
   try {
     const res = await getCategoryListSimple()
     categoryOptions.value = res.items || res.data || res || []
+    categoryTree.value = Array.isArray(res.tree) ? res.tree : []
+    uncategorizedCount.value = res.uncategorized_count || 0
+    totalDocCount.value = (res.items || []).reduce((sum, c) => sum + (c.doc_count || 0), 0) + uncategorizedCount.value
+    // 默认展开一级分类
+    expandedCategoryKeys.value = categoryTree.value.map(n => n.id)
+    // 分类树加载后按最新层级修正宽度，保证至少能显示 4 个汉字
+    sidebarWidth.value = clampSidebarWidth(sidebarWidth.value)
   } catch { /* ignore */ }
 }
+
+/** 点击左侧树节点：选中该分类，并保持/展开其子分类 */
+function handleCategoryClick(data, node) {
+  selectCategory(data.id)
+  if (node && Array.isArray(node.childNodes) && node.childNodes.length && !node.expanded) {
+    node.expand()
+  }
+}
+
+function selectCategory(id) {
+  const next = (id === UNCATEGORIZED) ? UNCATEGORIZED : (id ?? null)
+  if (next === selectedCategoryId.value) return
+  selectedCategoryId.value = next
+  pagination.page = 1
+  fetchDocuments()
+}
+
+/** 当前分类的面包屑文字 */
+const currentCategoryLabel = computed(() => {
+  if (selectedCategoryId.value === null) return '全部分类'
+  if (selectedCategoryId.value === UNCATEGORIZED) return '未分类'
+  const find = (nodes) => {
+    for (const n of nodes || []) {
+      if (n.id === selectedCategoryId.value) return n
+      const hit = find(n.children || [])
+      if (hit) return hit
+    }
+    return null
+  }
+  const node = find(categoryTree.value)
+  return node ? (node.path || node.name) : '分类'
+})
+
 async function fetchDepartments() {
   try {
     const deptRes = await getDepartmentSimple()
@@ -835,40 +1010,31 @@ async function fetchDocLevels() {
   } catch { /* ignore */ }
 }
 async function fetchOptions() {
-  await fetchCategories()
+  await fetchCategoryTree()
   await fetchDepartments()
   await fetchDocLevels()
 }
 
 // 搜索/重置
-function handleSearch() { fetchGroupedDocuments() }
+function handleSearch() {
+  pagination.page = 1
+  fetchDocuments()
+}
 function handleReset() {
-  searchForm.keyword = ''; searchForm.category_id = ''; searchForm.department_id = ''; searchForm.doc_level = ''; searchForm.confidential_level = ''
-  fetchGroupedDocuments()
+  searchForm.keyword = ''; searchForm.department_id = ''; searchForm.doc_level = ''; searchForm.confidential_level = ''
+  pagination.page = 1
+  fetchDocuments()
 }
 
-async function handleGroupPageChange(groupId, page) {
-  // 只更新当前组的页码和文档，其他组不动
-  const group = categoryGroups.value.find(g => g.id === groupId)
-  if (!group) return
-  group._page = page
-  try {
-    const params = {
-      keyword: searchForm.keyword || undefined,
-      category_id: searchForm.category_id || undefined,
-      department_id: searchForm.department_id || undefined,
-      doc_level: searchForm.doc_level || undefined,
-      confidential_level: searchForm.confidential_level || undefined,
-      page,
-      page_size: 30,
-    }
-    const res = await getDocumentGrouped(params)
-    const targetGroup = (res || []).find(g => g.id === groupId)
-    if (targetGroup) {
-      group.documents = targetGroup.documents
-      group.total = targetGroup.total
-    }
-  } catch { /* ignore */ }
+function handlePageChange(page) {
+  pagination.page = page
+  fetchDocuments()
+}
+
+function handlePageSizeChange(size) {
+  pagination.pageSize = size
+  pagination.page = 1
+  fetchDocuments()
 }
 
 // 查看
@@ -902,7 +1068,7 @@ async function handleRollback(row) {
     await rollbackDocumentVersion(versionDoc.value.id, row.version)
     ElMessage.success(`已回滚到 v${row.version}`)
     versionVisible.value = false
-    fetchGroupedDocuments()
+    fetchDocuments()
   } catch { /* ignore */ }
 }
 
@@ -923,7 +1089,7 @@ async function handleDeleteVersion(row) {
     if (versionItems.value.length === 0) {
       versionVisible.value = false
     }
-    fetchGroupedDocuments()
+    fetchDocuments()
   } catch { /* ignore */ }
 }
 
@@ -1037,7 +1203,7 @@ async function handleDelete(row) {
   try {
     await ElMessageBox.confirm(`确定要删除文档「${row.title}」吗？删除后文档将移至回收站，管理员可恢复。`, '删除确认', { confirmButtonText: '确定删除', cancelButtonText: '取消', type: 'warning' })
     await deleteDocument(row.id)
-    ElMessage.success('删除成功'); fetchGroupedDocuments()
+    ElMessage.success('删除成功'); fetchDocuments()
   } catch { /* ignore */ }
 }
 
@@ -1066,7 +1232,7 @@ async function handleEditSubmit() {
         confidential_level: editForm.confidential_level || undefined,
         doc_no: editForm.doc_no || undefined,
       })
-      ElMessage.success('更新成功'); editVisible.value = false; fetchGroupedDocuments()
+      ElMessage.success('更新成功'); editVisible.value = false; fetchDocuments()
     } catch { /* ignore */ } finally { editSubmitting.value = false }
   })
 }
@@ -1184,16 +1350,234 @@ async function handleBatchPermSubmit() {
   } catch { /* ignore */ } finally { batchPermSaving.value = false }
 }
 
-onMounted(() => { fetchGroupedDocuments(); fetchOptions() })
+onMounted(() => {
+  // 窄屏默认收起侧边栏，给文档列表留出空间
+  if (isMobile.value) sidebarCollapsed.value = true
+  window.addEventListener('resize', handleWindowResize)
+  fetchOptions()
+  fetchDocuments()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', handleWindowResize)
+  window.removeEventListener('pointermove', handleResizeMove)
+  window.removeEventListener('pointerup', stopResize)
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+})
 </script>
 
 <style scoped>
 .document-manage {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: flex-start;
   gap: 16px;
   max-width: 1400px;
   margin: 0 auto;
+}
+
+/* ── 左侧分类目录树 ── */
+.category-sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  background: #fff;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 120px);
+  position: sticky;
+  top: 12px;
+  overflow: hidden;
+}
+
+.category-sidebar.is-collapsed {
+  width: 44px;
+}
+
+/* 右侧拖拽调宽手柄 */
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+  touch-action: none;
+}
+
+.sidebar-resizer::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  width: 2px;
+  height: 34px;
+  transform: translateY(-50%);
+  border-radius: 1px;
+  background: #c9cdd4;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.sidebar-resizer:hover::after,
+.category-sidebar.is-resizing .sidebar-resizer::after {
+  opacity: 1;
+  background: #165dff;
+}
+
+.category-sidebar.is-resizing {
+  user-select: none;
+}
+
+.category-sidebar.is-resizing :deep(.el-tree) {
+  pointer-events: none;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid #f0f0f0;
+  flex-shrink: 0;
+}
+
+.sidebar-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1d2129;
+  white-space: nowrap;
+}
+
+.category-sidebar.is-collapsed .sidebar-title {
+  display: none;
+}
+
+.sidebar-scroll {
+  flex: 1;
+  min-height: 0;
+  padding: 6px 0 10px;
+}
+
+.tree-node {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #4e5969;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tree-node:hover {
+  background: #f2f3f5;
+}
+
+.tree-node.active {
+  background: #e8f3ff;
+  color: #165dff;
+  font-weight: 500;
+}
+
+.tree-icon {
+  font-size: 14px;
+  color: #ffb400;
+  flex-shrink: 0;
+}
+
+.tree-node.active .tree-icon {
+  color: #165dff;
+}
+
+.tree-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-count {
+  flex-shrink: 0;
+  min-width: 20px;
+  padding: 0 6px;
+  font-size: 12px;
+  line-height: 18px;
+  text-align: center;
+  color: #86909c;
+  background: #f2f3f5;
+  border-radius: 9px;
+}
+
+.tree-node.active .tree-count {
+  color: #165dff;
+  background: #d4e8ff;
+}
+
+.tree-all,
+.tree-uncat {
+  margin: 2px 8px;
+}
+
+.category-sidebar :deep(.el-tree) {
+  padding: 0 8px;
+  background: transparent;
+}
+
+.category-sidebar :deep(.el-tree-node__content) {
+  height: 32px;
+  background: transparent;
+}
+
+.category-sidebar :deep(.el-tree-node__content:hover) {
+  background: transparent;
+}
+
+/* ── 右侧文档区 ── */
+.doc-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.doc-list-area {
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
+}
+
+.list-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px 10px;
+}
+
+.current-category {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1d2129;
+}
+
+.doc-total {
+  font-size: 12px;
+  color: #86909c;
+}
+
+.list-pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
 }
 
 /* ── 搜索栏 ── */

@@ -1,25 +1,25 @@
 <template>
   <div class="category-manage">
-    <!-- 三级分类结构概览 -->
+    <!-- 分类结构概览 -->
     <el-card shadow="never" class="structure-card">
       <div class="card-header">
-        <span class="structure-title">三级分类结构</span>
-        <div class="structure-hint">一级：文档分类　·　二级：部门分类　·　三级：文档级别</div>
+        <span class="structure-title">分类结构</span>
+        <div class="structure-hint">文档分类为目录树（可多级嵌套）　·　部门、文档级别为文档的附加属性</div>
       </div>
       <div class="structure-levels" v-loading="structureLoading">
-        <!-- 一级分类 -->
         <div class="level-row">
-          <div class="level-badge level-1">一级</div>
+          <div class="level-badge level-1">分类</div>
           <div class="level-body">
-            <div class="level-name">文档分类</div>
-            <div class="level-desc">在下方表格中维护，用于文档上传与权限控制</div>
+            <div class="level-name">文档分类（目录树）</div>
+            <div class="level-desc">在下方目录树中维护，支持多级嵌套，文档管理页侧边栏会按此结构展示</div>
           </div>
-          <el-button type="primary" link :disabled="categoryList.length === 0" @click="scrollToTable">共 {{ pagination.total || categoryList.length }} 项</el-button>
+          <el-button type="primary" link :disabled="totalCount === 0" @click="scrollToTable">
+            共 {{ totalCount }} 个分类
+          </el-button>
         </div>
 
-        <!-- 二级部门 -->
         <div class="level-row">
-          <div class="level-badge level-2">二级</div>
+          <div class="level-badge level-2">部门</div>
           <div class="level-body">
             <div class="level-name">部门分类</div>
             <div class="level-desc">引用「部门管理」中的部门，文档可归属到具体部门</div>
@@ -33,9 +33,8 @@
           </el-button>
         </div>
 
-        <!-- 三级文档级别 -->
         <div class="level-row">
-          <div class="level-badge level-3">三级</div>
+          <div class="level-badge level-3">级别</div>
           <div class="level-body">
             <div class="level-name">文档级别</div>
             <div class="level-desc">系统预设的文档保密级别，用于文档分级标识</div>
@@ -50,25 +49,55 @@
 
     <!-- 操作栏 -->
     <el-card shadow="never" class="search-card" id="category-table-card">
-      <div class="card-header">
-        <span>分类管理</span>
-        <el-button type="primary" :icon="Plus" @click="handleAdd">新增分类</el-button>
+      <div class="card-header toolbar">
+        <div class="toolbar-left">
+          <span class="toolbar-title">分类目录</span>
+          <el-input
+            v-model="keyword"
+            placeholder="搜索分类名称 / 编码"
+            clearable
+            :prefix-icon="Search"
+            style="width: 220px"
+          />
+          <el-button :icon="expandAll ? Fold : Expand" @click="toggleExpandAll">
+            {{ expandAll ? '全部折叠' : '全部展开' }}
+          </el-button>
+        </div>
+        <el-button type="primary" :icon="Plus" @click="handleAdd">新增根分类</el-button>
       </div>
     </el-card>
 
-    <!-- 分类列表 -->
+    <!-- 分类目录树 -->
     <el-card shadow="never">
       <el-table
+        :key="tableKey"
         v-loading="loading"
-        :data="categoryList"
+        :data="filteredTree"
         border
         stripe
         row-key="id"
+        :default-expand-all="expandAll"
+        :tree-props="{ children: 'children' }"
         style="width: 100%"
+        empty-text="暂无分类，点击右上角「新增根分类」开始建立目录"
       >
-        <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="name" label="分类名称" min-width="140" />
-        <el-table-column prop="description" label="描述" min-width="160" show-overflow-tooltip />
+        <el-table-column label="分类名称" min-width="240" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="node-name">
+              <el-icon class="node-icon" :class="{ 'is-leaf': !row.children || !row.children.length }">
+                <FolderOpened v-if="row.children && row.children.length" />
+                <Document v-else />
+              </el-icon>
+              {{ row.name }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="code" label="编码" width="140" show-overflow-tooltip />
+        <el-table-column label="描述" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span>{{ row.description || '-' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="业务类型" width="110" align="center">
           <template #default="{ row }">
             <el-tag v-if="row.business_type" type="primary" size="small">{{ row.business_type }}</el-tag>
@@ -96,46 +125,59 @@
             <span v-else style="color:#86909c">-</span>
           </template>
         </el-table-column>
-        <el-table-column prop="doc_count" label="文档数量" width="100" />
-        <el-table-column prop="sort_order" label="排序" width="80" />
-        <el-table-column prop="created_at" label="创建时间" width="170" />
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="文档数量" width="110" align="center">
           <template #default="{ row }">
+            <el-tooltip
+              v-if="row.subtree_doc_count > row.doc_count"
+              :content="`本级 ${row.doc_count} 篇，含子分类共 ${row.subtree_doc_count} 篇`"
+              placement="top"
+            >
+              <span>{{ row.subtree_doc_count }}</span>
+            </el-tooltip>
+            <span v-else>{{ row.doc_count || 0 }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="230" fixed="right">
+          <template #default="{ row }">
+            <el-button type="primary" link size="small" @click="handleAddChild(row)">子分类</el-button>
             <el-button type="primary" link size="small" @click="openPerm(row)">权限</el-button>
             <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
             <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
-
-      <!-- 分页 -->
-      <div class="pagination-wrapper">
-        <el-pagination
-          v-model:current-page="pagination.page"
-          v-model:page-size="pagination.pageSize"
-          :total="pagination.total"
-          :page-sizes="[10, 20, 50]"
-          layout="total, sizes, prev, pager, next, jumper"
-          background
-          @size-change="handleSizeChange"
-          @current-change="handlePageChange"
-        />
-      </div>
     </el-card>
 
     <!-- 新增/编辑对话框 -->
     <el-dialog
       v-model="dialogVisible"
       :title="dialogTitle"
-      width="500px"
+      width="520px"
       destroy-on-close
     >
       <el-form
         ref="formRef"
         :model="formData"
         :rules="formRules"
-        label-width="80px"
+        label-width="90px"
       >
+        <el-form-item label="上级分类" prop="parent_id">
+          <el-tree-select
+            v-model="formData.parent_id"
+            :data="parentTreeData"
+            node-key="id"
+            :props="treeSelectProps"
+            check-strictly
+            clearable
+            default-expand-all
+            :render-after-expand="false"
+            placeholder="不选则为根分类"
+            style="width: 100%"
+          />
+          <div style="margin-top:4px;font-size:12px;color:#86909c">
+            {{ parentHint }}
+          </div>
+        </el-form-item>
         <el-form-item label="分类名称" prop="name">
           <el-input v-model="formData.name" placeholder="请输入分类名称" />
         </el-form-item>
@@ -188,6 +230,7 @@
         </el-form-item>
         <el-form-item label="排序" prop="sort_order">
           <el-input-number v-model="formData.sort_order" :min="0" :max="999" />
+          <span style="margin-left:12px;font-size:12px;color:#86909c">同级内数值小的排在前</span>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -208,7 +251,6 @@
         授权后，所授角色/用户可查看或编辑该分类下的全部文档（查看包含下载），适用于现存及新上传文档。
       </div>
 
-      <!-- 新增授权 -->
       <el-form :inline="true" class="perm-grant-form">
         <el-form-item label="角色">
           <el-select v-model="grantRoleId" placeholder="选择角色" clearable filterable style="width: 160px">
@@ -238,7 +280,6 @@
         </el-form-item>
       </el-form>
 
-      <!-- 授权列表 -->
       <el-table :data="catPerms" v-loading="permLoading" size="small" border>
         <el-table-column label="授权对象" min-width="160">
           <template #default="{ row }">
@@ -272,11 +313,14 @@
 /**
  * 分类管理页面
  * 系统管理员和文档管理员可管理文档分类
+ *
+ * 分类以目录树形式展示：支持多级嵌套、展开折叠、按名称/编码搜索、
+ * 直接在某节点下新增子分类，并阻止把分类移动到自己的子分类下。
  */
 import { ref, reactive, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
-import { getCategoryList, createCategory, updateCategory, deleteCategory } from '../api/category.js'
+import { Plus, Search, Expand, Fold, FolderOpened, Document } from '@element-plus/icons-vue'
+import { getCategoryTree, createCategory, updateCategory, deleteCategory } from '../api/category.js'
 import { getDepartmentSimple } from '../api/department.js'
 import {
   getDocLevels,
@@ -287,48 +331,43 @@ import {
 import { getRoleListSimple } from '../api/role.js'
 import { getUserList } from '../api/user.js'
 
-// 加载状态
 const loading = ref(false)
 const submitting = ref(false)
 const structureLoading = ref(false)
 
-// 三级分类结构数据
 const departmentOptions = ref([])
 const docLevels = ref(['无级别'])
 
-// 角色选项（默认授权角色多选）
 const roleOptions = ref([])
 const roleMap = ref({})
 const roleName = (rid) => roleMap.value[rid] || `角色${rid}`
 
-// 分类列表
-const categoryList = ref([])
+const categoryTree = ref([])
+const keyword = ref('')
+const expandAll = ref(true)
+const tableKey = ref(0)
 
-// 分页
-const pagination = reactive({
-  page: 1,
-  pageSize: 10,
-  total: 0
-})
+const treeSelectProps = { label: 'name', children: 'children', disabled: 'disabled' }
 
-// 对话框
 const dialogVisible = ref(false)
 const editingId = ref(null)
 const formRef = ref(null)
 
-const dialogTitle = computed(() => editingId.value ? '编辑分类' : '新增分类')
+const dialogTitle = computed(() => {
+  if (!editingId.value) return formData.parent_id ? '新增子分类' : '新增根分类'
+  return '编辑分类'
+})
 
-// 表单数据
 const formData = reactive({
   name: '',
   description: '',
   business_type: '',
   is_public: false,
   default_role_ids: [],
-  sort_order: 0
+  sort_order: 0,
+  parent_id: null
 })
 
-// 校验规则
 const formRules = {
   name: [
     { required: true, message: '请输入分类名称', trigger: 'blur' },
@@ -336,18 +375,85 @@ const formRules = {
   ]
 }
 
-/**
- * 加载分类列表
- */
-async function fetchList() {
+/** 去掉空 children，避免表格出现无意义的展开箭头 */
+function normalizeTree(nodes) {
+  return (nodes || []).map((node) => {
+    const children = normalizeTree(node.children || [])
+    const item = { ...node }
+    if (children.length) item.children = children
+    else delete item.children
+    return item
+  })
+}
+
+function countNodes(nodes) {
+  return (nodes || []).reduce((sum, n) => sum + 1 + countNodes(n.children || []), 0)
+}
+
+const totalCount = computed(() => countNodes(categoryTree.value))
+
+function filterTree(nodes, kw) {
+  const result = []
+  for (const node of nodes || []) {
+    const children = filterTree(node.children || [], kw)
+    const hit = !kw || (node.name || '').includes(kw) || (node.code || '').includes(kw)
+    if (hit || children.length) {
+      const item = { ...node }
+      if (children.length) item.children = children
+      else delete item.children
+      result.push(item)
+    }
+  }
+  return result
+}
+
+const filteredTree = computed(() => filterTree(categoryTree.value, keyword.value.trim()))
+
+function collectIds(node, acc = new Set()) {
+  acc.add(node.id)
+  for (const child of node.children || []) collectIds(child, acc)
+  return acc
+}
+
+function findNode(nodes, id) {
+  for (const node of nodes || []) {
+    if (node.id === id) return node
+    const found = findNode(node.children || [], id)
+    if (found) return found
+  }
+  return null
+}
+
+function pruneTree(nodes, excluded) {
+  return (nodes || [])
+    .filter((n) => !excluded.has(n.id))
+    .map((n) => ({ ...n, children: pruneTree(n.children || [], excluded) }))
+}
+
+/** 上级分类下拉：编辑时排除自身与后代，防止形成环 */
+const parentTreeData = computed(() => {
+  if (!editingId.value) return categoryTree.value
+  const current = findNode(categoryTree.value, editingId.value)
+  if (!current) return categoryTree.value
+  return pruneTree(categoryTree.value, collectIds(current))
+})
+
+const parentHint = computed(() => {
+  if (editingId.value) return '可移动到其它分类下，或清空移到根层级'
+  return formData.parent_id ? '将作为该分类的子分类' : '不选则创建为根分类'
+})
+
+function toggleExpandAll() {
+  expandAll.value = !expandAll.value
+  tableKey.value += 1
+}
+
+async function fetchTree() {
   loading.value = true
   try {
-    const res = await getCategoryList({
-      page: pagination.page,
-      page_size: pagination.pageSize
-    })
-    categoryList.value = res.items || res.data || res || []
-    pagination.total = res.total || 0
+    const res = await getCategoryTree()
+    const list = Array.isArray(res) ? res : (res.items || [])
+    categoryTree.value = normalizeTree(list)
   } catch (error) {
     // 错误已在拦截器中处理
   } finally {
@@ -355,23 +461,27 @@ async function fetchList() {
   }
 }
 
-/**
- * 新增
- */
 function handleAdd() {
-  editingId.value = null
+  resetForm(null, null)
+  dialogVisible.value = true
+}
+
+function handleAddChild(row) {
+  resetForm(null, row.id)
+  dialogVisible.value = true
+}
+
+function resetForm(id, parentId) {
+  editingId.value = id
   formData.name = ''
   formData.description = ''
   formData.business_type = ''
   formData.is_public = false
   formData.default_role_ids = []
   formData.sort_order = 0
-  dialogVisible.value = true
+  formData.parent_id = parentId ?? null
 }
 
-/**
- * 编辑
- */
 function handleEdit(row) {
   editingId.value = row.id
   formData.name = row.name
@@ -380,12 +490,10 @@ function handleEdit(row) {
   formData.is_public = row.is_public || false
   formData.default_role_ids = Array.isArray(row.default_role_ids) ? [...row.default_role_ids] : []
   formData.sort_order = row.sort_order || 0
+  formData.parent_id = row.parent_id ?? null
   dialogVisible.value = true
 }
 
-/**
- * 提交
- */
 async function handleSubmit() {
   if (!formRef.value) return
   await formRef.value.validate(async (valid) => {
@@ -398,6 +506,7 @@ async function handleSubmit() {
         business_type: (formData.business_type || '').trim() || null,
         is_public: formData.is_public,
         sort_order: formData.sort_order,
+        parent_id: formData.parent_id ?? null,
         default_role_ids: formData.default_role_ids
       }
       if (editingId.value) {
@@ -408,7 +517,7 @@ async function handleSubmit() {
         ElMessage.success('创建成功')
       }
       dialogVisible.value = false
-      fetchList()
+      fetchTree()
     } catch (error) {
       // 错误已在拦截器中处理
     } finally {
@@ -417,42 +526,28 @@ async function handleSubmit() {
   })
 }
 
-/**
- * 删除
- */
 async function handleDelete(row) {
+  const hasChildren = (row.children || []).length > 0
   try {
     await ElMessageBox.confirm(
-      `确定要删除分类「${row.name}」吗？`,
+      hasChildren
+        ? `「${row.name}」下还有 ${row.children.length} 个子分类，需先删除或移走子分类后才能删除。确定继续吗？`
+        : `确定要删除分类「${row.name}」吗？`,
       '删除确认',
       { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
     )
     await deleteCategory(row.id)
     ElMessage.success('删除成功')
-    fetchList()
+    fetchTree()
   } catch (error) {
-    // 用户取消或错误
+    // 用户取消或错误（后端拒绝时拦截器已提示）
   }
-}
-
-function handleSizeChange(size) {
-  pagination.pageSize = size
-  pagination.page = 1
-  fetchList()
-}
-
-function handlePageChange(page) {
-  pagination.page = page
-  fetchList()
 }
 
 function scrollToTable() {
   document.getElementById('category-table-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
-/**
- * 加载三级分类结构数据（部门、文档级别）
- */
 async function fetchStructure() {
   structureLoading.value = true
   try {
@@ -469,9 +564,6 @@ async function fetchStructure() {
   structureLoading.value = false
 }
 
-/**
- * 加载角色选项（默认授权角色多选）
- */
 async function fetchRoles() {
   try {
     const roles = await getRoleListSimple()
@@ -595,7 +687,7 @@ async function removeCategoryPerm(perm) {
 }
 
 onMounted(() => {
-  fetchList()
+  fetchTree()
   fetchStructure()
   fetchRoles()
 })
@@ -650,7 +742,7 @@ onMounted(() => {
 
 .level-badge {
   flex-shrink: 0;
-  width: 40px;
+  width: 44px;
   height: 40px;
   border-radius: 8px;
   display: flex;
@@ -705,9 +797,31 @@ onMounted(() => {
   align-items: center;
 }
 
-.pagination-wrapper {
+.toolbar-left {
   display: flex;
-  justify-content: flex-end;
-  margin-top: 16px;
+  align-items: center;
+  gap: 12px;
+}
+
+.toolbar-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1d2129;
+}
+
+.node-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.node-icon {
+  color: #ffb400;
+  font-size: 15px;
+}
+
+.node-icon.is-leaf {
+  color: #86909c;
+  font-size: 14px;
 }
 </style>

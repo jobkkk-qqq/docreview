@@ -478,6 +478,52 @@ async def _attach_version_totals(session: AsyncSession, documents: list[Document
         d.version_total = totals.get(key, 1)
 
 
+async def get_category_subtree_ids(session: AsyncSession, category_id: int) -> set[int]:
+    """返回指定分类及其全部后代分类的ID集合（用于「点父分类看全部子分类文档」）"""
+    rows = (await session.execute(select(Category.id, Category.parent_id))).all()
+    children_map: dict[int | None, list[int]] = {}
+    for cid, pid in rows:
+        children_map.setdefault(pid, []).append(cid)
+
+    ids = {category_id}
+    stack = [category_id]
+    while stack:
+        current = stack.pop()
+        for child in children_map.get(current, []):
+            if child not in ids:
+                ids.add(child)
+                stack.append(child)
+    return ids
+
+
+async def get_category_doc_counts(
+    session: AsyncSession,
+    current_user: User | None = None,
+) -> tuple[dict[int, int], int]:
+    """按分类统计可见文档数（与文档列表使用同一套权限过滤），返回 (分类计数, 未分类计数)"""
+    from app.services.permission_service import get_document_visibility_filter
+
+    stmt = (
+        select(Document.category_id, func.count())
+        .where(Document.is_deleted == False, _current_version_condition())  # noqa: E712
+        .group_by(Document.category_id)
+    )
+    if current_user and not current_user.is_superuser:
+        visibility = get_document_visibility_filter(current_user)
+        if visibility is not None:
+            stmt = stmt.where(visibility)
+
+    rows = (await session.execute(stmt)).all()
+    counts: dict[int, int] = {}
+    uncategorized = 0
+    for cid, cnt in rows:
+        if cid is None:
+            uncategorized = cnt
+        else:
+            counts[cid] = cnt
+    return counts, uncategorized
+
+
 async def list_documents(
     session: AsyncSession,
     page: int = 1,
@@ -519,8 +565,10 @@ async def list_documents(
         stmt = stmt.where(conditions)
         count_stmt = count_stmt.where(conditions)
     if category_id:
-        stmt = stmt.where(Document.category_id == category_id)
-        count_stmt = count_stmt.where(Document.category_id == category_id)
+        # 选中父分类时，包含其全部子分类的文档（目录树语义）
+        cat_ids = await get_category_subtree_ids(session, category_id)
+        stmt = stmt.where(Document.category_id.in_(cat_ids))
+        count_stmt = count_stmt.where(Document.category_id.in_(cat_ids))
     if department_id:
         stmt = stmt.where(Document.department_id == department_id)
         count_stmt = count_stmt.where(Document.department_id == department_id)

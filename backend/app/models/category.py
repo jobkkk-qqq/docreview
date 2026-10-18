@@ -2,11 +2,14 @@
 文档分类模型
 
 对应数据库表：
-- categories: id SERIAL PK, name, code, description, folder_path, sort_order, is_active, created_at
+- categories: id PK, name, code, description, folder_path, parent_id, sort_order, is_active, created_at
 - category_default_roles: 分类默认授权角色（上传到该分类的文档自动授予这些角色查看/下载权限）
+
+分类按 parent_id 自关联组织成目录树：parent_id 为空即为根节点。
 """
 
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import String, Boolean, DateTime, ForeignKey, Integer, Index, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -32,6 +35,15 @@ class Category(Base):
     description: Mapped[str | None] = mapped_column(String(500), comment="分类描述")
     folder_path: Mapped[str | None] = mapped_column(String(500), comment="文件夹路径")
 
+    # ── 目录树结构 ──────────────────────────────────────────
+    # parent_id 为空表示根节点；删除父分类时子分类自动上提为根节点（SET NULL）
+    parent_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("categories.id", ondelete="SET NULL"),
+        default=None,
+        comment="上级分类ID，为空表示根节点",
+    )
+
     # ── 权限与业务类型 ──────────────────────────────────────
     is_public: Mapped[bool] = mapped_column(Boolean, default=False, comment="是否全员可见")
     business_type: Mapped[str | None] = mapped_column(String(50), comment="业务类型标签（standard/form/quality/environment/patent/contract）")
@@ -48,6 +60,17 @@ class Category(Base):
     )
 
     # ── 关系 ────────────────────────────────────────────────
+    children: Mapped[list["Category"]] = relationship(
+        "Category",
+        back_populates="parent",
+        lazy="noload",
+    )
+    parent: Mapped[Optional["Category"]] = relationship(
+        "Category",
+        back_populates="children",
+        remote_side="Category.id",
+        lazy="noload",
+    )
     documents: Mapped[list["Document"]] = relationship(  # noqa: F821
         "Document",
         back_populates="category",
@@ -66,7 +89,11 @@ class Category(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<Category id={self.id} name={self.name}>"
+        return f"<Category id={self.id} name={self.name} parent={self.parent_id}>"
+
+    __table_args__ = (
+        Index("ix_categories_parent_id", "parent_id"),
+    )
 
 
 class CategoryDefaultRole(Base):

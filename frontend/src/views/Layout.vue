@@ -6,7 +6,7 @@
       :width="appStore.sidebarCollapsed ? '64px' : '220px'"
       class="layout-aside"
     >
-      <Sidebar />
+      <Sidebar @toggle="handleSidebarToggle" />
     </el-aside>
 
     <!-- 右侧区域 -->
@@ -18,7 +18,7 @@
           <el-icon
             v-if="!isMobile"
             class="collapse-btn"
-            @click="appStore.toggleSidebar"
+            @click="handleManualToggle"
           >
             <Expand v-if="appStore.sidebarCollapsed" />
             <Fold v-else />
@@ -77,7 +77,7 @@
       size="220px"
       class="mobile-sidebar-drawer"
     >
-      <Sidebar @menu-click="drawerVisible = false" />
+      <Sidebar :show-toggle="false" @menu-click="drawerVisible = false" />
     </el-drawer>
 
     <!-- 修改密码弹窗 -->
@@ -136,7 +136,7 @@
 </template>
 
 <script setup>
-import { computed, ref, reactive, onMounted, onUnmounted } from 'vue'
+import { computed, ref, reactive, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Expand,
@@ -166,10 +166,46 @@ const MOBILE_BREAKPOINT = 768
 const isMobile = ref(window.innerWidth <= MOBILE_BREAKPOINT)
 const drawerVisible = ref(false)
 
+// ── 导航菜单自动收起 ─────────────────────────────────────
+// 文档管理页自带分类侧边栏，进入时自动收起左侧功能菜单，把横向空间让给它；
+// 离开该页时恢复展开；用户手动切换过之后不再自动收起。
+const AUTO_COLLAPSE_PATHS = ['/documents']
+const autoCollapsed = ref(false)
+
+/** 手动切换折叠状态（顶部按钮） */
+function handleManualToggle() {
+  autoCollapsed.value = false
+  appStore.toggleSidebar()
+}
+
+/** 侧边栏底部按钮已经自己切换过折叠状态，这里只需清掉“自动收起”标记 */
+function handleSidebarToggle() {
+  autoCollapsed.value = false
+}
+
+/** 根据当前路由决定是否自动收起/恢复 */
+function syncAutoCollapse(path) {
+  if (isMobile.value) return
+  const shouldCollapse = AUTO_COLLAPSE_PATHS.includes(path)
+  if (shouldCollapse) {
+    if (!appStore.sidebarCollapsed) {
+      appStore.setSidebarCollapsed(true)
+      autoCollapsed.value = true
+    }
+  } else if (autoCollapsed.value) {
+    appStore.setSidebarCollapsed(false)
+    autoCollapsed.value = false
+  }
+}
+
+watch(() => route.path, (path) => syncAutoCollapse(path), { immediate: true })
+
 function handleResize() {
   isMobile.value = window.innerWidth <= MOBILE_BREAKPOINT
   if (!isMobile.value) {
     drawerVisible.value = false
+    // 从窄屏切回宽屏时，按当前路由重新判断是否自动收起
+    syncAutoCollapse(route.path)
   }
 }
 

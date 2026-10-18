@@ -26,7 +26,7 @@
             <el-option
               v-for="item in categoryOptions"
               :key="item.id"
-              :label="item.name"
+              :label="categoryOptionLabel(item)"
               :value="item.id"
             />
           </el-select>
@@ -355,6 +355,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { getDocumentList, getDocumentDetail, downloadDocument, reportPreviewLog, getDocLevels, getDocumentVersions, deleteDocument } from '../api/document.js'
 import { getCategoryListSimple } from '../api/category.js'
+import { categoryOptionLabel } from '../utils/category.js'
 import { getDepartmentSimple } from '../api/department.js'
 import { isPreviewable, getPreviewType, OFFICE_EXTS, IMAGE_MIME_MAP } from '../utils/preview.js'
 import { saveBlobAsFile } from '../utils/download.js'

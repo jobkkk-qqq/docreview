@@ -26,6 +26,23 @@
         </el-menu-item>
       </template>
     </el-menu>
+
+    <!-- 底部收起/展开 -->
+    <div v-if="showToggle" class="sidebar-footer">
+      <el-tooltip
+        :content="appStore.sidebarCollapsed ? '展开菜单' : '收起菜单'"
+        placement="right"
+        :disabled="!appStore.sidebarCollapsed"
+      >
+        <div class="collapse-toggle" @click="handleToggle">
+          <el-icon class="collapse-icon">
+            <Expand v-if="appStore.sidebarCollapsed" />
+            <Fold v-else />
+          </el-icon>
+          <span v-show="!appStore.sidebarCollapsed" class="collapse-text">收起菜单</span>
+        </div>
+      </el-tooltip>
+    </div>
   </div>
 </template>
 
@@ -46,7 +63,9 @@ import {
   UserFilled,
   Tickets,
   Setting,
-  Grid
+  Grid,
+  Expand,
+  Fold
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth.js'
 import { useAppStore } from '../stores/app.js'
@@ -74,7 +93,21 @@ onMounted(async () => {
 })
 
 // 向父组件通知菜单点击事件（移动端抽屉关闭用）
-const emit = defineEmits(['menu-click'])
+const emit = defineEmits(['menu-click', 'toggle'])
+
+// 移动端抽屉里不显示收起按钮（抽屉本身就是临时展开的）
+defineProps({
+  showToggle: {
+    type: Boolean,
+    default: true
+  }
+})
+
+/** 底部收起/展开：切换折叠状态并通知父组件（父组件据此清掉“自动收起”标记） */
+function handleToggle() {
+  appStore.toggleSidebar()
+  emit('toggle')
+}
 
 // menu_key -> 路由 path 映射
 const MENU_PATH_MAP = {
@@ -180,5 +213,39 @@ const activeMenu = computed(() => route.path)
   border-right: none;
   flex: 1;
   overflow-y: auto;
+}
+
+/* ── 底部收起/展开 ── */
+.sidebar-footer {
+  flex-shrink: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background-color: #263445;
+}
+
+.collapse-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 20px;
+  color: #bfcbd9;
+  cursor: pointer;
+  font-size: 13px;
+  user-select: none;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.collapse-toggle:hover {
+  background-color: rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+
+.collapse-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.collapse-text {
+  white-space: nowrap;
 }
 </style>

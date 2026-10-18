@@ -39,10 +39,10 @@
               <el-option
                 v-for="item in categoryOptions"
                 :key="item.id"
-                :label="item.name"
+                :label="categoryOptionLabel(item)"
                 :value="item.id"
               >
-                <span>{{ item.name }}</span>
+                <span>{{ categoryOptionLabel(item) }}</span>
                 <el-tag
                   v-if="isRecommendedCategory(item)"
                   size="small"
@@ -260,10 +260,10 @@
               <el-option
                 v-for="item in categoryOptions"
                 :key="item.id"
-                :label="item.name"
+                :label="categoryOptionLabel(item)"
                 :value="item.id"
               >
-                <span>{{ item.name }}</span>
+                <span>{{ categoryOptionLabel(item) }}</span>
                 <el-tag
                   v-if="isRecommendedCategory(item)"
                   size="small"
@@ -559,6 +559,7 @@ import { UploadFilled, WarningFilled } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth.js'
 import { uploadDocument, batchUploadDocuments, getDocLevels, checkSameName, getDocumentList } from '../api/document.js'
 import { getCategoryListSimple } from '../api/category.js'
+import { categoryOptionLabel } from '../utils/category.js'
 import { getDepartmentSimple } from '../api/department.js'
 import { getRoleListSimple } from '../api/role.js'
 

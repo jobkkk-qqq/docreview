@@ -1,7 +1,11 @@
 """
 分类管理路由
 
-提供分类 CRUD 接口。
+提供分类 CRUD 接口。分类按 parent_id 组织成目录树：
+- GET /tree            管理端：返回嵌套树（需 manage_categories 权限）
+- GET /simple          文档管理侧边栏/上传选择：返回平铺列表 + 嵌套树，带各分类可见文档数
+- GET /                分页平铺列表（兼容旧调用）
+- POST / PUT / DELETE  增删改，含父子层级与环路校验
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -9,16 +13,22 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_session
-from app.api.deps import require_admin, require_permission, get_current_user, get_client_ip
+from app.api.deps import require_permission, get_current_user, get_client_ip
 from app.models.user import User
 from app.models.category import Category, CategoryDefaultRole
 from app.models.role import Role
 from app.models.audit_log import AuditLog
 from app.schemas.category import CategoryCreate, CategoryUpdate, CategoryOut, CategoryTreeItem
 from app.schemas.user import PaginatedResponse
+from app.services.doc_service import get_category_doc_counts
 
 router = APIRouter(prefix="/categories", tags=["文档分类"])
 
+# 目录树最大层级（根节点 depth=0），防止误操作产生过深嵌套
+MAX_CATEGORY_DEPTH = 8
+
+
+# ── 内部工具函数 ────────────────────────────────────────────
 
 async def _get_default_role_ids(session: AsyncSession, category_id: int) -> list[int]:
     """查询分类的默认授权角色ID列表"""
@@ -55,22 +65,6 @@ async def _save_default_roles(
     return await _get_default_role_ids(session, category_id)
 
 
-async def _attach_doc_counts(session: AsyncSession, categories: list[Category]) -> dict[int, int]:
-    """批量查询分类下的文档数，返回 {category_id: count}"""
-    if not categories:
-        return {}
-    from app.models.document import Document
-    cat_ids = [c.id for c in categories]
-    stmt = (
-        select(Category.id, func.count(Document.id))
-        .join(Document, Document.category_id == Category.id, isouter=True)
-        .where(Category.id.in_(cat_ids))
-        .group_by(Category.id)
-    )
-    rows = (await session.execute(stmt)).all()
-    return {row[0]: row[1] for row in rows}
-
-
 async def _attach_default_role_ids(session: AsyncSession, categories: list[Category]) -> dict[int, list[int]]:
     """批量查询分类的默认授权角色，返回 {category_id: [role_id]}"""
     if not categories:
@@ -86,24 +80,163 @@ async def _attach_default_role_ids(session: AsyncSession, categories: list[Categ
     return mapping
 
 
+async def _load_all_categories(session: AsyncSession) -> list[Category]:
+    """按排序号、ID 加载全部分类（平铺，顺序即树中兄弟节点顺序）"""
+    stmt = select(Category).order_by(Category.sort_order, Category.id)
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def _build_items(session: AsyncSession, categories: list[Category], current_user: User) -> list[CategoryOut]:
+    """把 ORM 分类对象转成带文档数、路径、层级的响应项（平铺，顺序不变）"""
+    doc_counts, _ = await get_category_doc_counts(session, current_user)
+    default_roles = await _attach_default_role_ids(session, categories)
+
+    items: list[CategoryOut] = []
+    for c in categories:
+        item = CategoryOut.model_validate(c)
+        item.doc_count = doc_counts.get(c.id, 0)
+        item.subtree_doc_count = item.doc_count
+        item.default_role_ids = default_roles.get(c.id, [])
+        items.append(item)
+
+    _apply_paths_and_depth(items)
+    _apply_subtree_counts(items)
+    return items
+
+
+def _apply_paths_and_depth(items: list[CategoryOut]) -> None:
+    """填充每个节点的 depth 与完整路径（如「标准表单 / 国家标准」）"""
+    by_id = {i.id: i for i in items}
+    for item in items:
+        names = [item.name]
+        depth = 0
+        parent_id = item.parent_id
+        seen = {item.id}
+        while parent_id and parent_id in by_id and parent_id not in seen:
+            seen.add(parent_id)
+            parent = by_id[parent_id]
+            names.append(parent.name)
+            depth += 1
+            parent_id = parent.parent_id
+        item.depth = depth
+        item.path = " / ".join(reversed(names))
+
+
+def _apply_subtree_counts(items: list[CategoryOut]) -> None:
+    """把每个节点的文档数累加进所有祖先的 subtree_doc_count"""
+    by_id = {i.id: i for i in items}
+    for item in items:
+        parent_id = item.parent_id
+        seen = {item.id}
+        while parent_id and parent_id in by_id and parent_id not in seen:
+            seen.add(parent_id)
+            parent = by_id[parent_id]
+            parent.subtree_doc_count += item.doc_count
+            parent_id = parent.parent_id
+
+
+def _build_tree(items: list[CategoryOut]) -> list[CategoryTreeItem]:
+    """把平铺列表按 parent_id 组装成嵌套树；找不到父节点的节点作为根节点处理"""
+    by_id: dict[int, CategoryTreeItem] = {}
+    for item in items:
+        by_id[item.id] = CategoryTreeItem(**item.model_dump())
+
+    roots: list[CategoryTreeItem] = []
+    for item in items:
+        node = by_id[item.id]
+        parent = by_id.get(item.parent_id) if item.parent_id else None
+        if parent is not None and parent is not node:
+            parent.children.append(node)
+        else:
+            roots.append(node)
+    return roots
+
+
+async def _validate_parent(
+    session: AsyncSession,
+    parent_id: int | None,
+    *,
+    category_id: int | None = None,
+) -> None:
+    """校验上级分类：必须存在、不能是自己、不能是自己的后代、层级不能超限"""
+    if parent_id is None:
+        return
+    if category_id is not None and parent_id == category_id:
+        raise HTTPException(status_code=400, detail="上级分类不能是自身")
+
+    parent = (await session.execute(select(Category).where(Category.id == parent_id))).scalar_one_or_none()
+    if parent is None:
+        raise HTTPException(status_code=400, detail="上级分类不存在")
+
+    if category_id is not None:
+        descendants = await _get_descendant_ids(session, category_id)
+        if parent_id in descendants:
+            raise HTTPException(status_code=400, detail="不能把分类移动到它自己的子分类下")
+
+    parent_depth = await _get_depth(session, parent_id)
+    if parent_depth + 1 > MAX_CATEGORY_DEPTH:
+        raise HTTPException(status_code=400, detail=f"分类层级最多 {MAX_CATEGORY_DEPTH + 1} 级，不能再新增下级")
+
+
+async def _get_depth(session: AsyncSession, category_id: int) -> int:
+    """计算分类的层级（根节点为 0）"""
+    rows = dict((await session.execute(select(Category.id, Category.parent_id))).all())
+    depth = 0
+    current = rows.get(category_id)
+    seen = {category_id}
+    while current and current in rows and current not in seen:
+        seen.add(current)
+        depth += 1
+        current = rows.get(current)
+    return depth
+
+
+async def _get_descendant_ids(session: AsyncSession, category_id: int) -> set[int]:
+    """获取分类的全部后代ID（广度遍历 parent_id）"""
+    rows = (await session.execute(select(Category.id, Category.parent_id))).all()
+    children_map: dict[int | None, list[int]] = {}
+    for cid, pid in rows:
+        children_map.setdefault(pid, []).append(cid)
+
+    descendants: set[int] = set()
+    stack = [category_id]
+    while stack:
+        current = stack.pop()
+        for child in children_map.get(current, []):
+            if child not in descendants:
+                descendants.add(child)
+                stack.append(child)
+    return descendants
+
+
+async def _ensure_unique_name(
+    session: AsyncSession,
+    name: str,
+    parent_id: int | None,
+    *,
+    exclude_id: int | None = None,
+) -> None:
+    """同一层级下不允许重名分类"""
+    stmt = select(Category.id).where(Category.name == name)
+    stmt = stmt.where(Category.parent_id.is_(None)) if parent_id is None else stmt.where(Category.parent_id == parent_id)
+    if exclude_id is not None:
+        stmt = stmt.where(Category.id != exclude_id)
+    if (await session.execute(stmt)).first() is not None:
+        raise HTTPException(status_code=400, detail="同一层级下已存在同名分类")
+
+
+# ── 查询接口 ────────────────────────────────────────────────
+
 @router.get("/tree", summary="分类树")
 async def get_category_tree(
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_permission("manage_categories")),
 ):
-    """获取分类列表（平铺，前端构建树）"""
-    stmt = select(Category).order_by(Category.sort_order, Category.id)
-    result = await session.execute(stmt)
-    categories = list(result.scalars().all())
-    doc_counts = await _attach_doc_counts(session, categories)
-    default_roles = await _attach_default_role_ids(session, categories)
-    items = []
-    for c in categories:
-        item = CategoryOut.model_validate(c)
-        item.doc_count = doc_counts.get(c.id, 0)
-        item.default_role_ids = default_roles.get(c.id, [])
-        items.append(item)
-    return items
+    """获取分类目录树（嵌套结构，含每个节点的文档数与子树文档数）"""
+    categories = await _load_all_categories(session)
+    items = await _build_items(session, categories, current_user)
+    return _build_tree(items)
 
 
 @router.get("/", summary="分类列表")
@@ -113,7 +246,7 @@ async def list_categories(
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_permission("manage_categories")),
 ):
-    """分页获取分类列表"""
+    """分页获取分类列表（平铺，带 parent_id 与完整路径）"""
     count_stmt = select(func.count()).select_from(Category)
     total = (await session.execute(count_stmt)).scalar() or 0
 
@@ -122,16 +255,14 @@ async def list_categories(
     result = await session.execute(stmt)
     categories = list(result.scalars().all())
 
-    doc_counts = await _attach_doc_counts(session, categories)
-    default_roles = await _attach_default_role_ids(session, categories)
-    items = []
-    for c in categories:
-        item = CategoryOut.model_validate(c)
-        item.doc_count = doc_counts.get(c.id, 0)
-        item.default_role_ids = default_roles.get(c.id, [])
-        items.append(item)
+    # 路径需要全量分类才能拼出来
+    all_items = await _build_items(session, await _load_all_categories(session), current_user)
+    page_ids = {c.id for c in categories}
+    items = [i for i in all_items if i.id in page_ids]
     return PaginatedResponse(total=total, page=page, page_size=page_size, items=items)
 
+
+# ── 增删改 ──────────────────────────────────────────────────
 
 @router.post("/", summary="创建分类")
 async def create_category(
@@ -140,7 +271,7 @@ async def create_category(
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_permission("manage_categories")),
 ):
-    """创建新分类"""
+    """创建新分类（可通过 parent_id 挂到某个分类下）"""
     code = data.code
     if not code:
         import re
@@ -164,11 +295,15 @@ async def create_category(
         if existing:
             raise HTTPException(status_code=400, detail="分类编码已存在")
 
+    await _validate_parent(session, data.parent_id)
+    await _ensure_unique_name(session, data.name, data.parent_id)
+
     category = Category(
         name=data.name,
         code=code,
         description=data.description,
         folder_path=data.folder_path,
+        parent_id=data.parent_id,
         sort_order=data.sort_order,
         is_public=data.is_public,
         business_type=data.business_type,
@@ -187,12 +322,13 @@ async def create_category(
         user_id=current_user.id, action="create",
         target_type="category", target_id=category.id,
         ip_address=ip_address,
-        detail={"name": data.name, "code": data.code, "default_role_ids": default_role_ids},
+        detail={"name": data.name, "code": data.code, "parent_id": data.parent_id, "default_role_ids": default_role_ids},
     )
     session.add(log)
 
     await session.refresh(category)
-    item = CategoryOut.model_validate(category)
+    all_items = await _build_items(session, await _load_all_categories(session), current_user)
+    item = next((i for i in all_items if i.id == category.id), None) or CategoryOut.model_validate(category)
     item.default_role_ids = default_role_ids
     return item
 
@@ -205,7 +341,7 @@ async def update_category(
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_permission("manage_categories")),
 ):
-    """更新分类信息"""
+    """更新分类信息（含移动到其它上级分类）"""
     stmt = select(Category).where(Category.id == cat_id)
     category = (await session.execute(stmt)).scalar_one_or_none()
     if category is None:
@@ -214,6 +350,25 @@ async def update_category(
     update_data = data.model_dump(exclude_unset=True)
     default_role_ids_provided = "default_role_ids" in update_data
     default_role_ids = update_data.pop("default_role_ids", None)
+
+    # parent_id 允许显式传 null（移到根层级），因此用 model_fields_set 判断是否提交
+    parent_provided = "parent_id" in update_data
+    new_parent_id = update_data.pop("parent_id", None) if parent_provided else category.parent_id
+
+    if parent_provided:
+        await _validate_parent(session, new_parent_id, category_id=cat_id)
+        update_data["parent_id"] = new_parent_id
+
+    if "name" in update_data and update_data["name"] != category.name:
+        await _ensure_unique_name(
+            session,
+            update_data["name"],
+            new_parent_id if parent_provided else category.parent_id,
+            exclude_id=cat_id,
+        )
+    elif parent_provided and new_parent_id != category.parent_id:
+        await _ensure_unique_name(session, category.name, new_parent_id, exclude_id=cat_id)
+
     for field, value in update_data.items():
         setattr(category, field, value)
     await session.flush()
@@ -232,7 +387,8 @@ async def update_category(
     session.add(log)
 
     await session.refresh(category)
-    item = CategoryOut.model_validate(category)
+    all_items = await _build_items(session, await _load_all_categories(session), current_user)
+    item = next((i for i in all_items if i.id == cat_id), None) or CategoryOut.model_validate(category)
     item.default_role_ids = default_role_ids
     return item
 
@@ -244,11 +400,17 @@ async def delete_category(
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(require_permission("manage_categories")),
 ):
-    """删除分类"""
+    """删除分类（存在子分类时禁止删除，避免误删整棵子树）"""
     stmt = select(Category).where(Category.id == cat_id)
     category = (await session.execute(stmt)).scalar_one_or_none()
     if category is None:
         raise HTTPException(status_code=404, detail="分类不存在")
+
+    # 检查是否有子分类
+    child_count_stmt = select(func.count()).select_from(Category).where(Category.parent_id == cat_id)
+    child_count = (await session.execute(child_count_stmt)).scalar() or 0
+    if child_count > 0:
+        raise HTTPException(status_code=400, detail=f"该分类下还有 {child_count} 个子分类，请先删除或移走子分类")
 
     # 检查是否有文档关联此分类
     from app.models.document import Document
@@ -276,50 +438,91 @@ async def list_categories_simple(
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(get_current_user),
 ):
-    """获取分类列表（简化版，用于上传时选择，所有登录用户可访问）
-    
+    """获取分类列表（简化版，用于文档管理侧边栏、上传时选择，所有登录用户可访问）
+
+    返回：
+    - items: 平铺列表（含 parent_id / path / depth / doc_count / subtree_doc_count）
+    - tree:  嵌套树（供侧边栏与树形选择器使用）
+    - uncategorized_count: 未分类文档数
+
     显示规则：
     1. 管理员：显示所有分类
     2. 业务角色用户：显示公开分类 + 匹配业务范围的分类
     3. 普通用户：只显示公开分类
+
+    可见分类的上级分类会作为「路径上下文」一并返回，保证树结构完整；
+    上级本身不可见时标记 disabled，仅供展示不可选择。
     """
     from app.services.permission_service import get_user_business_scopes
-    
-    # 获取用户的业务范围
-    user_business_scopes = get_user_business_scopes(current_user)
-    
-    # 构建查询条件
-    if current_user.is_superuser:
-        # 管理员：所有分类
-        stmt = select(Category).order_by(Category.sort_order, Category.id)
-    elif user_business_scopes:
-        # 特殊处理：文档管理员（doc_admin）可以看到所有分类
-        if 'doc_admin' in user_business_scopes:
-            stmt = select(Category).order_by(Category.sort_order, Category.id)
-        else:
-            # 其他业务角色用户：公开分类 OR 匹配业务范围的分类
-            from sqlalchemy import or_
-            stmt = select(Category).where(
-                or_(
-                    Category.is_public == True,
-                    Category.business_type.in_(user_business_scopes)
-                )
-            ).order_by(Category.sort_order, Category.id)
-    else:
-        # 普通用户：只显示公开分类
-        stmt = select(Category).where(Category.is_public == True).order_by(Category.sort_order, Category.id)
-    
-    result = await session.execute(stmt)
-    categories = list(result.scalars().all())
-    default_roles = await _attach_default_role_ids(session, categories)
 
-    items = []
-    for c in categories:
-        items.append({
-            "id": c.id,
-            "name": c.name,
-            "code": c.code,
-            "business_type": c.business_type,
-            "default_role_ids": default_roles.get(c.id, []),
+    user_business_scopes = get_user_business_scopes(current_user)
+    all_categories = await _load_all_categories(session)
+
+    if current_user.is_superuser or 'doc_admin' in user_business_scopes:
+        visible_ids = {c.id for c in all_categories}
+    elif user_business_scopes:
+        visible_ids = {
+            c.id for c in all_categories
+            if c.is_public or (c.business_type and c.business_type in user_business_scopes)
+        }
+    else:
+        visible_ids = {c.id for c in all_categories if c.is_public}
+
+    # 补齐祖先节点作为路径上下文
+    by_id = {c.id: c for c in all_categories}
+    context_ids: set[int] = set()
+    for cid in list(visible_ids):
+        parent_id = by_id[cid].parent_id
+        seen = {cid}
+        while parent_id and parent_id in by_id and parent_id not in seen:
+            seen.add(parent_id)
+            context_ids.add(parent_id)
+            parent_id = by_id[parent_id].parent_id
+
+    included_ids = visible_ids | context_ids
+    included = [c for c in all_categories if c.id in included_ids]
+    items = await _build_items(session, included, current_user)
+
+    _, uncategorized_count = await get_category_doc_counts(session, current_user)
+    disabled_ids = included_ids - visible_ids
+
+    flat_items = [{
+        "id": item.id,
+        "name": item.name,
+        "code": item.code,
+        "parent_id": item.parent_id,
+        "path": item.path,
+        "depth": item.depth,
+        "business_type": item.business_type,
+        "default_role_ids": item.default_role_ids,
+        "doc_count": item.doc_count,
+        "subtree_doc_count": item.subtree_doc_count,
+        "disabled": item.id in disabled_ids,
+    } for item in items]
+
+    return {
+        "items": flat_items,
+        "tree": _tree_to_dict(_build_tree(items), disabled_ids),
+        "uncategorized_count": uncategorized_count,
+    }
+
+
+def _tree_to_dict(nodes: list[CategoryTreeItem], disabled_ids: set[int]) -> list[dict]:
+    """把树节点转成前端友好的 dict，并标记不可选择的上下文节点"""
+    result = []
+    for node in nodes:
+        result.append({
+            "id": node.id,
+            "name": node.name,
+            "code": node.code,
+            "parent_id": node.parent_id,
+            "path": node.path,
+            "depth": node.depth,
+            "business_type": node.business_type,
+            "default_role_ids": node.default_role_ids,
+            "doc_count": node.doc_count,
+            "subtree_doc_count": node.subtree_doc_count,
+            "disabled": node.id in disabled_ids,
+            "children": _tree_to_dict(node.children, disabled_ids),
         })
-    return {"items": items}
+    return result

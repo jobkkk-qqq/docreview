@@ -14,7 +14,17 @@ export function getCategoryList(params) {
 }
 
 /**
- * 获取简化分类列表（所有登录用户可访问，用于上传时选择）
+ * 获取分类目录树（嵌套结构，含每个节点的文档数与子树文档数）
+ * 仅分类管理员可用
+ * @returns {Promise}
+ */
+export function getCategoryTree() {
+  return request.get('/categories/tree')
+}
+
+/**
+ * 获取简化分类列表（所有登录用户可访问，用于文档管理侧边栏、上传时选择）
+ * 返回 { items: 平铺列表, tree: 嵌套树, uncategorized_count: 未分类文档数 }
  * @returns {Promise}
  */
 export function getCategoryListSimple() {

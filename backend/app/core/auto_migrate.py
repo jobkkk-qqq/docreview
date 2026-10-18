@@ -10,6 +10,8 @@
   v4 — 回填已有文档的 content_hash（文件内容 SHA-256）
   v5 — 分类三级化（documents 表添加 department_id、doc_level 字段）
   v6 — 分类默认授权角色（新建 category_default_roles 表）
+  v7 — 版本组关联（documents 表添加 version_group_id 字段）
+  v8 — 分类目录树（categories 表添加 parent_id 字段，支持父子层级）
 """
 import hashlib
 import logging
@@ -23,7 +25,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # 当前数据库 schema 版本，新增迁移时递增此值
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 
 # system_configs 中存储版本号的 key
 VERSION_KEY = "schema_version"
@@ -247,6 +249,28 @@ async def _migrate_v7(conn) -> None:
     logger.info("[AutoMigrate][v7] 版本组字段迁移完成")
 
 
+async def _migrate_v8(conn) -> None:
+    """v8 迁移：categories 表添加 parent_id（分类目录树）
+
+    存量分类全部保持为根节点（parent_id 为空），行为与迁移前一致。
+    """
+    tables = await conn.run_sync(lambda sync_conn: inspect(sync_conn).get_table_names())
+    if "categories" not in tables:
+        return
+
+    cat_cols = {col["name"] for col in await conn.run_sync(
+        lambda sync_conn: inspect(sync_conn).get_columns("categories")
+    )}
+    if "parent_id" not in cat_cols:
+        await conn.execute(text(
+            "ALTER TABLE categories ADD COLUMN parent_id INTEGER DEFAULT NULL "
+            "REFERENCES categories (id) ON DELETE SET NULL"
+        ))
+        logger.info("[AutoMigrate] categories.parent_id 字段已添加")
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_categories_parent_id ON categories (parent_id)"))
+    logger.info("[AutoMigrate][v8] 分类目录树迁移完成")
+
+
 async def auto_migrate(engine: AsyncEngine) -> None:
     """
     自动迁移入口。
@@ -262,7 +286,7 @@ async def auto_migrate(engine: AsyncEngine) -> None:
 
         logger.info(f"[AutoMigrate] 数据库版本 v{db_version}，需要迁移到 v{CURRENT_SCHEMA_VERSION}")
 
-        # v1、v2、v3、v5、v6 均为纯 DDL/轻量更新，在事务内执行
+        # v1、v2、v3、v5、v6、v7、v8 均为纯 DDL/轻量更新，在事务内执行
         if db_version < 1:
             await _migrate_v1(conn)
         if db_version < 2:
@@ -275,6 +299,8 @@ async def auto_migrate(engine: AsyncEngine) -> None:
             await _migrate_v6(conn)
         if db_version < 7:
             await _migrate_v7(conn)
+        if db_version < 8:
+            await _migrate_v8(conn)
 
         # 先提交版本号并退出 conn 事务
         await _set_db_version(conn, CURRENT_SCHEMA_VERSION)
