@@ -9,7 +9,7 @@
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_session
@@ -433,6 +433,53 @@ async def delete_category(
     return {"detail": "分类已删除"}
 
 
+async def _granted_category_ids(
+    session: AsyncSession, user: User, all_categories: list[Category],
+) -> set[int]:
+    """用户通过文档级/分类级显式授权即可访问的分类ID集合。
+
+    与 permission_service 的可见性过滤保持同源语义：
+    - 分类级授权：can_view 或 can_edit
+    - 文档级授权：can_view 或 can_download（仅未删除文档）
+    """
+    from app.models.document import Document, DocumentPermission, CategoryPermission
+
+    role_ids = user.all_role_ids
+    cat_subject = [CategoryPermission.user_id == user.id]
+    doc_subject = [DocumentPermission.user_id == user.id]
+    if role_ids:
+        cat_subject.append(CategoryPermission.role_id.in_(role_ids))
+        doc_subject.append(DocumentPermission.role_id.in_(role_ids))
+
+    ids: set[int] = set()
+
+    cat_stmt = (
+        select(CategoryPermission.category_id)
+        .where(
+            or_(CategoryPermission.can_view == True, CategoryPermission.can_edit == True),
+            or_(*cat_subject),
+        )
+        .distinct()
+    )
+    ids.update(cid for (cid,) in (await session.execute(cat_stmt)).all() if cid)
+
+    doc_stmt = (
+        select(Document.category_id)
+        .join(DocumentPermission, DocumentPermission.document_id == Document.id)
+        .where(
+            Document.is_deleted == False,
+            Document.category_id.isnot(None),
+            or_(DocumentPermission.can_view == True, DocumentPermission.can_download == True),
+            or_(*doc_subject),
+        )
+        .distinct()
+    )
+    ids.update(cid for (cid,) in (await session.execute(doc_stmt)).all() if cid)
+
+    known = {c.id for c in all_categories}
+    return {cid for cid in ids if cid in known}
+
+
 @router.get("/simple", summary="简化分类列表（所有登录用户可访问）")
 async def list_categories_simple(
     session: AsyncSession = Depends(get_async_session),
@@ -460,13 +507,17 @@ async def list_categories_simple(
 
     if current_user.is_superuser or 'doc_admin' in user_business_scopes:
         visible_ids = {c.id for c in all_categories}
-    elif user_business_scopes:
-        visible_ids = {
-            c.id for c in all_categories
-            if c.is_public or (c.business_type and c.business_type in user_business_scopes)
-        }
     else:
-        visible_ids = {c.id for c in all_categories if c.is_public}
+        if user_business_scopes:
+            visible_ids = {
+                c.id for c in all_categories
+                if c.is_public or (c.business_type and c.business_type in user_business_scopes)
+            }
+        else:
+            visible_ids = {c.id for c in all_categories if c.is_public}
+        # 显式授权（文档级 / 分类级）涉及的分类同样可见：
+        # 管理员已把某分类下的文档授权给该用户或其角色时，侧边栏不应再隐藏该分类
+        visible_ids |= await _granted_category_ids(session, current_user, all_categories)
 
     # 补齐祖先节点作为路径上下文
     by_id = {c.id: c for c in all_categories}
