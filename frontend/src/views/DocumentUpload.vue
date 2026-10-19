@@ -151,7 +151,7 @@
               :limit="1"
               :on-change="handleFileChange"
               :on-remove="handleFileRemove"
-              accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.jpg,.png,.zip,.rar"
+              accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.wps,.txt,.jpg,.png,.zip,.rar"
               drag
             >
               <el-icon class="el-icon--upload" :size="40"><UploadFilled /></el-icon>
@@ -160,7 +160,7 @@
               </div>
               <template #tip>
                 <div class="el-upload__tip">
-                  支持 PDF、Word、Excel、PPT、TXT、图片、压缩包等格式，单文件不超过 50MB
+                  支持 PDF、Word、Excel、PPT、WPS 文字、TXT、图片、压缩包等格式，单文件不超过 50MB
                 </div>
               </template>
             </el-upload>
@@ -365,7 +365,7 @@
               v-model:file-list="batchFileList"
               :auto-upload="false"
               multiple
-              accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.jpg,.png,.zip,.rar"
+              accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.wps,.txt,.jpg,.png,.zip,.rar"
               drag
             >
               <el-icon class="el-icon--upload" :size="40"><UploadFilled /></el-icon>
@@ -374,7 +374,7 @@
               </div>
               <template #tip>
                 <div class="el-upload__tip">
-                  支持 PDF、Word、Excel、PPT、TXT、图片、压缩包等格式，可选择多个文件，标题自动取文件名
+                  支持 PDF、Word、Excel、PPT、WPS 文字、TXT、图片、压缩包等格式，可选择多个文件，标题自动取文件名
                 </div>
               </template>
             </el-upload>

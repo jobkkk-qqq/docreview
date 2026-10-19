@@ -67,6 +67,7 @@ export function fileTypeTagType(filename) {
   const typeMap = {
     pdf: 'danger',
     doc: 'primary', docx: 'primary',
+    wps: 'primary',
     xls: 'success', xlsx: 'success',
     ppt: 'warning', pptx: 'warning',
     txt: 'info',

@@ -40,6 +40,7 @@ document_ext_mimetypes = {
     '.svg': 'image/svg+xml',
     '.txt': 'text/plain;charset=utf-8',
     '.md': 'text/markdown;charset=utf-8',
+    '.wps': 'application/vnd.ms-works',
 }
 
 def _get_inline_mimetype(filename: str) -> str:

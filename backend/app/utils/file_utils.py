@@ -24,6 +24,9 @@ ALLOWED_FILE_TYPES: dict[str, list[str]] = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
     "application/vnd.ms-powerpoint": [".ppt"],
     "application/vnd.openxmlformats-officedocument.presentationml.presentation": [".pptx"],
+    # WPS 文字（金山 WPS 的 .wps）；注意部分浏览器上传 .wps 时会上报 application/octet-stream，
+    # 因此本表仅作语义映射，实际上传校验以扩展名为准。
+    "application/vnd.ms-works": [".wps"],
     # 纯文本
     "text/plain": [".txt"],
     "text/csv": [".csv"],
