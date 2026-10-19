@@ -250,15 +250,15 @@
                     </div>
                   </template>
                 </el-table-column>
-                <el-table-column label="文档编号" prop="doc_no" width="146" align="right" show-overflow-tooltip />
-                <el-table-column label="保密等级" width="116" align="right">
+                <el-table-column label="文档编号" prop="doc_no" :width="docNoColumnWidth" align="right" show-overflow-tooltip />
+                <el-table-column label="保密等级" :width="confidentialityColumnWidth" align="right">
                   <template #default="{ row }">
                     <el-tag :type="confidentialityTagType(row.confidential_level)" size="small">
                       {{ confidentialityLabel(row.confidential_level) }}
                     </el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column label="部门" width="108" align="right">
+                <el-table-column label="部门" :width="deptColumnWidth" align="right">
                   <template #default="{ row }">
                     {{ row.department?.name || '-' }}
                   </template>
@@ -942,6 +942,39 @@ const versionOpColumnWidth = computed(() => {
   }
   return Math.max(88, Math.min(320, Math.round(max)))
 })
+
+// 文本渲染宽度估算：中日韩字符按字号全宽，其余字符按约 0.55 倍
+function cjkTextWidth(text, size = 13) {
+  let w = 0
+  for (const ch of String(text ?? '')) {
+    w += /[\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]/.test(ch) ? size : size * 0.55
+  }
+  return w
+}
+
+// 数据列宽度：按当前页各行内容取最大宽度，避免固定宽度造成留白
+function dataColumnWidth(rows, getText, opts = {}) {
+  const { isTag = false, min = 80, max = 220 } = opts
+  let maxW = 0
+  for (const row of rows || []) {
+    const text = getText(row)
+    if (!text) continue
+    const w = isTag ? cjkTextWidth(text, 12) + 44 : cjkTextWidth(text, 13) + 30
+    if (w > maxW) maxW = w
+  }
+  return Math.max(min, Math.min(max, Math.round(maxW)))
+}
+
+// 文档编号 / 保密等级 / 部门 三列宽度（按内容自适应）
+const docNoColumnWidth = computed(() =>
+  dataColumnWidth(documents.value, (r) => r.doc_no, { min: 80, max: 200 })
+)
+const confidentialityColumnWidth = computed(() =>
+  dataColumnWidth(documents.value, (r) => confidentialityLabel(r.confidential_level), { isTag: true })
+)
+const deptColumnWidth = computed(() =>
+  dataColumnWidth(documents.value, (r) => r.department?.name, { min: 80, max: 200 })
+)
 
 // ── 数据加载 ──
 

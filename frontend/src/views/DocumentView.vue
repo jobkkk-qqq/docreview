@@ -66,7 +66,7 @@
       </template>
 
       <el-table v-loading="loading" :data="documentList" border stripe style="width: 100%">
-        <el-table-column prop="doc_no" label="文档编号" width="130" show-overflow-tooltip />
+        <el-table-column prop="doc_no" label="文档编号" :width="docNoColumnWidth" show-overflow-tooltip />
         <el-table-column prop="title" label="文档标题" min-width="200" show-overflow-tooltip>
           <template #default="{ row }">
             {{ row.title }}
@@ -91,7 +91,7 @@
             {{ row.category?.name || '-' }}
           </template>
         </el-table-column>
-        <el-table-column label="部门" width="120">
+        <el-table-column label="部门" :width="deptColumnWidth">
           <template #default="{ row }">
             {{ row.department?.name || '-' }}
           </template>
@@ -104,7 +104,7 @@
             <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column label="保密等级" width="100">
+        <el-table-column label="保密等级" :width="confidentialityColumnWidth">
           <template #default="{ row }">
             <el-tag
               :type="confidentialityTagType(row.confidential_level)"
@@ -453,6 +453,39 @@ const versionOpColumnWidth = computed(() => {
   }
   return Math.max(88, Math.min(320, Math.round(max)))
 })
+
+// 文本渲染宽度估算：中日韩字符按字号全宽，其余字符按约 0.55 倍
+function cjkTextWidth(text, size = 13) {
+  let w = 0
+  for (const ch of String(text ?? '')) {
+    w += /[\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]/.test(ch) ? size : size * 0.55
+  }
+  return w
+}
+
+// 数据列宽度：按当前页各行内容取最大宽度，避免固定宽度造成留白
+function dataColumnWidth(rows, getText, opts = {}) {
+  const { isTag = false, min = 80, max = 220 } = opts
+  let maxW = 0
+  for (const row of rows || []) {
+    const text = getText(row)
+    if (!text) continue
+    const w = isTag ? cjkTextWidth(text, 12) + 44 : cjkTextWidth(text, 13) + 30
+    if (w > maxW) maxW = w
+  }
+  return Math.max(min, Math.min(max, Math.round(maxW)))
+}
+
+// 文档编号 / 保密等级 / 部门 三列宽度（按内容自适应）
+const docNoColumnWidth = computed(() =>
+  dataColumnWidth(documentList.value, (r) => r.doc_no, { min: 80, max: 200 })
+)
+const confidentialityColumnWidth = computed(() =>
+  dataColumnWidth(documentList.value, (r) => confidentialityLabel(r.confidential_level), { isTag: true })
+)
+const deptColumnWidth = computed(() =>
+  dataColumnWidth(documentList.value, (r) => r.department?.name, { min: 80, max: 200 })
+)
 
 // 删除旧的（非当前）版本：软删除该版本记录，可到回收站恢复
 async function handleDeleteVersion(row) {
