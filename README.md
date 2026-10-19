@@ -11,10 +11,10 @@
 - **文档管理**
   - 文档上传（批量）、下载、编辑、删除（回收站，管理员可恢复）
   - 支持文件类型标签展示（DOCX / PDF / XLSX / 图片…）
-  - 在线预览：Office（Word / Excel / PPT）自动转换为 PDF 预览，PDF / TXT / 图片直接预览
+  - 在线预览：Office（Word / Excel / PPT）与 WPS 文字（`.wps`）自动转换为 PDF 预览，PDF / TXT / 图片直接预览
   - 非公开文档预览时自动添加「用户名 + 日期」水印
 - **三级分类归档**
-  - 一级：文档分类
+  - 一级：文档分类（支持多级目录树，父子层级最多 8 级）
   - 二级：部门
   - 三级：文档级别（Ⅰ级文件 ~ 四级 + 无级别）
 - **权限体系**
@@ -27,9 +27,10 @@
   - 全量操作审计日志，支持关键词检索与 JSON 导出
   - 密码统一加盐哈希，登录异常容错
 - **运维能力**
-  - 旧数据库自动迁移（schema 版本号机制），防止数据丢失
+  - 旧数据库自动迁移（schema 版本号机制，当前 v8），防止数据丢失
   - doc-repo 启动扫描关联已有 PDF，治理「孤儿 / 悬空文件」
   - 局域网访问，端口可通过环境变量调整
+  - 随包提供 Windows 部署脚本（`启动系统.bat`、`开启防火墙端口.bat`），兼容 Windows Server 2012 R2 / 2016 / 2019
 
 ---
 
@@ -51,7 +52,7 @@
 - **前端**：Vue 3 + Element Plus + Vue Router + Pinia + Axios（Vite 构建）
 - **后端**：FastAPI + SQLAlchemy + aiosqlite + PyJWT
 - **桌面壳**：`main_win.py` 一键启动后端 + 前端，并由 `tray_app.py` 系统托盘管理
-- **预览转换**：LibreOffice 无头模式将 Office 转 PDF（串行化、超时清理）
+- **预览转换**：LibreOffice 无头模式将 Office / WPS 转 PDF（串行化、超时清理）
 - **数据存储**：SQLite（`docreview.db`），文件存储于 `doc-repo/`
 
 ### 端口说明
@@ -142,11 +143,14 @@ pyinstaller --clean docreview.spec
 
 ### 部署步骤（服务器）
 
-1. 将构建产物 `DocReview-Windows/` 分发到服务器任意目录。
-2. 运行 `DocReview.exe`（或一键脚本 `启动系统.bat`），自动启动前后端服务。
-3. 放行防火墙端口（脚本 `开启防火墙端口.bat`，开放 TCP 3000）。
-4. 客户端通过 `http://<服务器IP>:3000` 访问。
+1. 将构建产物 `DocReview-Windows/` 分发到服务器任意目录（建议固定盘符，路径不含空格）。
+2. 以管理员身份运行 `开启防火墙端口.bat`，放行 TCP `3000`、`9002` 入站端口。
+3. 双击 `启动系统.bat`（或直接运行 `DocReview.exe`），自动启动前后端服务。
+4. 本机访问 `http://127.0.0.1:3000`，局域网客户端访问 `http://<服务器IP>:3000`。
 5. 已有文档放入 `doc-repo/`，首次启动会自动扫描并关联 PDF、迁移旧数据库。
+
+> - 部署脚本采用 GBK 编码 + CRLF 换行，并以 `ping` 延时替代 `timeout`，可在 Windows Server 2012 R2 / 2016 / 2019 的计划任务、远程会话等非交互环境下正常运行。
+> - Office / WPS 文档在线预览依赖 LibreOffice：目标机器需安装 LibreOffice，或将便携版放入程序目录 `libreoffice/program/` 下。
 
 ### 常见问题
 

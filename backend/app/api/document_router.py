@@ -582,7 +582,7 @@ async def get_preview_pdf(
     repo_path = await settings.get_doc_repo_path()
     file_ext = Path(document.file_name).suffix.lower() if document.file_name else ''
     stored_ext = Path(document.file_path).suffix.lower() if document.file_path else ''
-    office_extensions = {'.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'}
+    office_extensions = {'.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.wps'}
     repo = Path(repo_path)
 
     is_pdf = file_ext == '.pdf' or stored_ext == '.pdf'
@@ -721,7 +721,7 @@ async def mobile_preview_pdf(
     stored_ext = Path(document.file_path).suffix.lower() if document.file_path else ''
     repo_path = await settings.get_doc_repo_path()
     repo = Path(repo_path)
-    office_extensions = {'.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'}
+    office_extensions = {'.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.wps'}
 
     is_pdf = file_ext == '.pdf' or stored_ext == '.pdf'
     is_office = file_ext in office_extensions or stored_ext in office_extensions

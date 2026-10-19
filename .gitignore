@@ -7,12 +7,13 @@
 node_modules/
 frontend/node_modules/
 
-# ── 构建产物 ──────────────────────────────────────────
+# ── 构建产物与分发压缩包 ───────────────────────────────
 build/
 dist/
 frontend/dist/
 DocReview-Windows/
 DocReview-Windows-old/
+*.rar
 
 # ── 一次性开发/迁移脚本 ──────────────────────────────
 _*.py
@@ -20,6 +21,11 @@ backend/_*.py
 backend/_prod_db_backup/
 backend/docreview_clean.db
 frontend/src/api/__apicheck.py
+# 本地一次性运维工具（批量补写服务器数据库预览路径），不纳入源码仓库
+补写WPS预览路径.*
+
+# ── 编辑器/IDE 临时产物 ────────────────────────────────
+.trae-html-share-packages/
 
 # ── 用户数据与敏感内容 ─────────────────────────────────
 # 文档实际存储目录（不含真实文档）

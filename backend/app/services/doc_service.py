@@ -288,7 +288,7 @@ async def upload_document(
 
     # 判断是否为 Office 文件（后台异步转换 PDF，不阻塞上传）
     file_ext = Path(file_name).suffix.lower()
-    office_extensions = {'.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'}
+    office_extensions = {'.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.wps'}
     is_office = file_ext in office_extensions
 
     # 生成文档编号（如果用户未提供）

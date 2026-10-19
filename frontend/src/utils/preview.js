@@ -3,8 +3,8 @@
  * 支持 Word、Excel、PPT、PDF、TXT、图片 格式的在线预览
  */
 
-// Office 文件扩展名集合
-export const OFFICE_EXTS = ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx']
+// Office 文件扩展名集合（wps 为 WPS 文字格式，转换后与 Word 同一预览链路）
+export const OFFICE_EXTS = ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'wps']
 
 // 图片 MIME 类型映射
 export const IMAGE_MIME_MAP = {
@@ -25,6 +25,7 @@ const PREVIEWABLE_TYPES = {
   xlsx: 'excel',
   ppt: 'ppt',
   pptx: 'ppt',
+  wps: 'word',
   pdf: 'pdf',
   txt: 'txt',
   md: 'txt',

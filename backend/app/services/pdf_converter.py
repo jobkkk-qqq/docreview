@@ -234,8 +234,8 @@ async def convert_office_to_pdf(
     input_path = Path(input_file)
     ext = input_path.suffix.lower()
 
-    # 只处理 Office 文件
-    office_extensions = {'.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'}
+    # 只处理 Office 文件（含 WPS 文字格式 .wps）
+    office_extensions = {'.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.wps'}
     if ext not in office_extensions:
         return None
 
