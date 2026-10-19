@@ -669,7 +669,7 @@
             <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" :width="versionOpColumnWidth" fixed="right">
           <template #default="{ row }">
             <el-button v-if="row.can_view" type="primary" link size="small" @click="handleView(row)">查看</el-button>
             <el-button
@@ -900,22 +900,47 @@ const canDeleteVersion = computed(() => canDeleteDocVersion())
 const canEdit = computed(() => canModifyDoc())
 const canManagePermissions = computed(() => canManageDocPermissions())
 
-// 操作列宽度：按当前用户权限的按钮数量动态估算，使各角色的列都贴合内容、避免留白
+// 操作列宽度：按当前页各行「实际会渲染」的按钮取最大宽度，权限少的角色、按钮少的行都不会留白
 const opColumnWidth = computed(() => {
   const btnW = (len) => len * 14 + 16 // 中文按钮按 14px/字 + 内边距估算
   const gap = 8
   const pad = 26
-  const texts = []
-  texts.push('查看')
-  texts.push('9个版本') // 版本按钮按最宽文本占位，避免截断
-  if (canEdit.value) texts.push('编辑')
-  if (canDelete.value) texts.push('删除')
-  texts.push('下载')
-  texts.push('预览')
-  if (canManagePermissions.value) texts.push('权限')
-  let w = pad
-  texts.forEach((t, i) => { w += btnW(t.length) + (i > 0 ? gap : 0) })
-  return Math.max(170, Math.min(320, Math.round(w)))
+  const rows = documents.value || []
+  let max = 0
+  for (const row of rows) {
+    const texts = ['查看']
+    if (row.version_total > 1) texts.push(`${row.version_total}个版本`)
+    if (canEdit.value) texts.push('编辑')
+    if (row.can_download !== false) texts.push('下载')
+    if (isPreviewable(row.file_name) && row.can_download) texts.push('预览')
+    if (canManagePermissions.value) texts.push('权限')
+    if (canDelete.value) texts.push('删除')
+    let w = pad
+    texts.forEach((t, i) => { w += btnW(t.length) + (i > 0 ? gap : 0) })
+    if (w > max) max = w
+  }
+  if (!rows.length) max = pad + btnW(2) // 无数据时至少容纳「查看」
+  return Math.max(88, Math.min(320, Math.round(max)))
+})
+
+// 版本历史弹窗操作列宽度：同样按当前各行实际渲染的按钮取最大宽度
+const versionOpColumnWidth = computed(() => {
+  const btnW = (len) => len * 14 + 16
+  const gap = 8
+  const pad = 26
+  const rows = versionItems.value || []
+  let max = 0
+  for (const row of rows) {
+    const texts = []
+    if (row.can_view) texts.push('查看')
+    if (row.can_download && row.can_view) texts.push('下载')
+    if (canEdit.value && !row.is_current && row.can_view) texts.push('设为当前')
+    if (canDeleteVersion.value && !row.is_current && row.can_view) texts.push('删除')
+    let w = pad
+    texts.forEach((t, i) => { w += btnW(t.length) + (i > 0 ? gap : 0) })
+    if (w > max) max = w
+  }
+  return Math.max(88, Math.min(320, Math.round(max)))
 })
 
 // ── 数据加载 ──

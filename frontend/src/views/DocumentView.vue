@@ -125,7 +125,7 @@
             <el-tag v-if="row.is_expired" size="small" type="danger" effect="plain" style="margin-left:4px">已过期</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" :width="listOpColumnWidth" fixed="right">
           <template #default="{ row }">
             <div class="table-op-btns">
             <el-button type="primary" link size="small" @click="handleView(row)">
@@ -222,7 +222,7 @@
             <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="230" fixed="right">
+        <el-table-column label="操作" :width="versionOpColumnWidth" fixed="right">
           <template #default="{ row }">
             <el-button v-if="row.can_view" type="primary" link size="small" @click="handleVersionView(row)">查看</el-button>
             <el-button
@@ -349,7 +349,7 @@
  * 文档查看页面
  * 普通用户使用的简化版文档查看界面，提供搜索、查看详情、预览、下载功能
  */
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
@@ -413,9 +413,46 @@ async function handleVersionView(row) {
 }
 
 // 是否有「删除旧版本」权限（控制版本历史面板中的删除按钮）
-function canDeleteVersion() {
-  return canDeleteDocVersion()
-}
+const canDeleteVersion = computed(() => canDeleteDocVersion())
+
+// 主列表操作列宽度：按当前页各行实际渲染的按钮/文字取最大宽度，权限少的角色不会留白
+const listOpColumnWidth = computed(() => {
+  const btnW = (len) => len * 14 + 16
+  const gap = 8
+  const pad = 26
+  const rows = documentList.value || []
+  let max = 0
+  for (const row of rows) {
+    const texts = ['查看详情']
+    if (row.version_total > 1) texts.push(`${row.version_total}个版本`)
+    if (isPreviewable(row.file_name)) texts.push('预览')
+    let w = pad
+    texts.forEach((t, i) => { w += btnW(t.length) + (i > 0 ? gap : 0) })
+    // 下载按钮与「无下载权限」提示文字互斥
+    w += gap + (row.can_download !== false ? btnW(2) : 12 * 5)
+    if (w > max) max = w
+  }
+  return Math.max(88, Math.min(320, Math.round(max)))
+})
+
+// 版本历史弹窗操作列宽度：按当前各行实际渲染的按钮取最大宽度
+const versionOpColumnWidth = computed(() => {
+  const btnW = (len) => len * 14 + 16
+  const gap = 8
+  const pad = 26
+  const rows = versionItems.value || []
+  let max = 0
+  for (const row of rows) {
+    const texts = []
+    if (row.can_view) texts.push('查看')
+    if (row.can_download && row.can_view) texts.push('下载')
+    if (canDeleteVersion.value && !row.is_current && row.can_view) texts.push('删除')
+    let w = pad
+    texts.forEach((t, i) => { w += btnW(t.length) + (i > 0 ? gap : 0) })
+    if (w > max) max = w
+  }
+  return Math.max(88, Math.min(320, Math.round(max)))
+})
 
 // 删除旧的（非当前）版本：软删除该版本记录，可到回收站恢复
 async function handleDeleteVersion(row) {
